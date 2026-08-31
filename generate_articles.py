@@ -9,17 +9,17 @@ import config
 
 
 def _cache_path(title):
-    h = hashlib.sha256(title.encode('utf-8')).hexdigest()[:16]
+    h = hashlib.sha256((title + '|article-v2-fast').encode('utf-8')).hexdigest()[:16]
     return os.path.join(config.CACHE_DIR, f'article_{h}.json')
 
 
 def _call_ollama(prompt):
-    """Stream Ollama output with no read-timeout; keep generation deliberately small."""
+    """Stream Ollama output; only the initial connection has a timeout."""
     started = time.monotonic()
     chunks = []
     chunk_count = 0
     last_report = started
-    print('[OLLAMA] generating... (no read timeout; waiting for Ollama)', flush=True)
+    print('[OLLAMA] generating... (no read timeout)', flush=True)
 
     with requests.post(
         config.OLLAMA_URL,
@@ -28,11 +28,11 @@ def _call_ollama(prompt):
             'prompt': prompt,
             'stream': True,
             'format': 'json',
-            'keep_alive': '10m',
+            'keep_alive': config.OLLAMA_KEEP_ALIVE,
             'options': {
                 'temperature': 0.05,
-                'num_ctx': 2048,
-                'num_predict': 650,
+                'num_ctx': config.OLLAMA_ARTICLE_CONTEXT,
+                'num_predict': config.OLLAMA_ARTICLE_PREDICT,
                 'top_k': 20,
                 'top_p': 0.8,
             },
@@ -92,10 +92,10 @@ def _valid_article(article):
 
 def _prompt(title):
     return f'''Create a SHORT original spoken YouTube tutorial for: "{title}".
-Return ONLY valid JSON. Do not use markdown.
-Use exactly 5-6 logical steps. Keep every field extremely short.
+Return ONLY valid JSON. Do not use markdown or explanations.
+Use exactly 5 logical steps. Keep every value short.
 Schema:
-{{"title":"short title","intro":"one short sentence","problem":"one short sentence","steps":[{{"step_title":"label","narration":"one short spoken sentence","visual_goal":"what viewer sees","interaction":"tap|long_press|swipe|press_buttons|type|none","target":"control or object","tip":"short tip"}}],"outro":"one short sentence"}}
+{{"title":"short title","intro":"one sentence","problem":"one sentence","steps":[{{"step_title":"label","narration":"one short spoken sentence","visual_goal":"what viewer sees","interaction":"tap|long_press|swipe|press_buttons|type|none","target":"control or object","tip":"short tip"}}],"outro":"one sentence"}}
 Every step MUST have non-empty narration. Do not invent uncertain UI details; use a neutral visual description when needed.'''
 
 
