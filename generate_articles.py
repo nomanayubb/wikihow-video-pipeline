@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import re
+import time
 import requests
 import config
 
@@ -13,23 +14,66 @@ def _cache_path(title):
 
 
 def _call_ollama(prompt, timeout=180):
-    r = requests.post(
-        config.OLLAMA_URL,
-        json={
-            'model': config.OLLAMA_MODEL,
-            'prompt': prompt,
-            'stream': False,
-            'format': 'json',
-            'options': {
-                'temperature': 0.2,
-                'num_ctx': 4096,
+    """Generate with Ollama streaming so the terminal proves generation is active."""
+    started = time.monotonic()
+    token_count = 0
+    chunks = []
+    last_report = started
+
+    print('[OLLAMA] Request sent; waiting for generation...', flush=True)
+    try:
+        with requests.post(
+            config.OLLAMA_URL,
+            json={
+                'model': config.OLLAMA_MODEL,
+                'prompt': prompt,
+                'stream': True,
+                'format': 'json',
+                'options': {
+                    'temperature': 0.2,
+                    'num_ctx': 4096,
+                },
             },
-        },
-        timeout=timeout,
-    )
-    r.raise_for_status()
-    data = r.json()
-    response = data.get('response', '')
+            timeout=(10, timeout),
+            stream=True,
+        ) as r:
+            r.raise_for_status()
+            for line in r.iter_lines(decode_unicode=True):
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                piece = data.get('response', '')
+                if piece:
+                    chunks.append(piece)
+                    token_count += 1
+
+                now = time.monotonic()
+                if piece and (now - last_report >= 1.0):
+                    elapsed = now - started
+                    rate = token_count / elapsed if elapsed else 0
+                    print(
+                        f'[OLLAMA] generating... chunks={token_count} | '
+                        f'{rate:.1f} chunks/s | elapsed={elapsed:.1f}s',
+                        flush=True,
+                    )
+                    last_report = now
+
+                if data.get('done'):
+                    elapsed = now - started
+                    print(
+                        f'[OLLAMA] generation complete | chunks={token_count} | '
+                        f'elapsed={elapsed:.1f}s',
+                        flush=True,
+                    )
+                    break
+    except requests.RequestException:
+        raise
+
+    response = ''.join(chunks).strip()
     if not response:
         raise ValueError('Ollama returned an empty response')
     return response
@@ -94,7 +138,6 @@ def generate_article(title, use_cache=True):
             cached = json.load(f)
         if _valid_article(cached):
             return cached
-        # Remove stale/invalid cache so a corrected Ollama response can be generated.
         try:
             os.remove(path)
         except OSError:
