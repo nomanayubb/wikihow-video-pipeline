@@ -13,8 +13,8 @@ def _cache_path(title):
     return os.path.join(config.CACHE_DIR, f'article_{h}.json')
 
 
-def _call_ollama(prompt, timeout=180):
-    """Generate with Ollama streaming so the terminal proves generation is active."""
+def _call_ollama(prompt, timeout=90):
+    """Generate with Ollama streaming, with a hard output cap for fast completion."""
     started = time.monotonic()
     token_count = 0
     chunks = []
@@ -30,8 +30,9 @@ def _call_ollama(prompt, timeout=180):
                 'stream': True,
                 'format': 'json',
                 'options': {
-                    'temperature': 0.2,
+                    'temperature': 0.1,
                     'num_ctx': 4096,
+                    'num_predict': 900,
                 },
             },
             timeout=(10, timeout),
@@ -109,6 +110,7 @@ def _prompt(title, retry=False):
     return f'''Create an ORIGINAL, accurate, spoken YouTube tutorial for: "{title}".
 Do not copy any existing article.
 {retry_note}
+Keep the response SHORT so it can be generated quickly: use 6-8 logical steps maximum, with 1-2 short spoken sentences per step.
 Return ONLY one valid JSON object using this exact structure:
 {{
   "title": "publishable title",
@@ -117,16 +119,16 @@ Return ONLY one valid JSON object using this exact structure:
   "steps": [
     {{
       "step_title": "short label",
-      "narration": "2-3 natural spoken sentences",
+      "narration": "1-2 natural spoken sentences",
       "visual_goal": "exactly what the viewer must see",
       "interaction": "tap|long_press|swipe|press_buttons|type|none",
       "target": "exact UI control or object",
-      "tip": "optional useful tip"
+      "tip": "short optional useful tip"
     }}
   ],
   "outro": "brief conclusion"
 }}
-Use at most {config.MAX_STEPS_PER_ARTICLE} logical steps.
+Use at most 8 logical steps.
 Each step MUST have non-empty narration.
 Do not invent uncertain UI details. If a detail is uncertain, describe it generically and let the visual planner use a neutral instructional graphic.'''
 
