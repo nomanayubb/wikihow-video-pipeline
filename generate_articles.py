@@ -13,66 +13,55 @@ def _cache_path(title):
     return os.path.join(config.CACHE_DIR, f'article_{h}.json')
 
 
-def _call_ollama(prompt, timeout=90):
-    """Generate with Ollama streaming, with a hard output cap for fast completion."""
+def _call_ollama(prompt):
+    """Stream Ollama output with no read-timeout; keep generation deliberately small."""
     started = time.monotonic()
-    token_count = 0
     chunks = []
+    chunk_count = 0
     last_report = started
+    print('[OLLAMA] generating... (no read timeout; waiting for Ollama)', flush=True)
 
-    print('[OLLAMA] Request sent; waiting for generation...', flush=True)
-    try:
-        with requests.post(
-            config.OLLAMA_URL,
-            json={
-                'model': config.OLLAMA_MODEL,
-                'prompt': prompt,
-                'stream': True,
-                'format': 'json',
-                'options': {
-                    'temperature': 0.1,
-                    'num_ctx': 4096,
-                    'num_predict': 900,
-                },
+    with requests.post(
+        config.OLLAMA_URL,
+        json={
+            'model': config.OLLAMA_MODEL,
+            'prompt': prompt,
+            'stream': True,
+            'format': 'json',
+            'keep_alive': '10m',
+            'options': {
+                'temperature': 0.05,
+                'num_ctx': 2048,
+                'num_predict': 650,
+                'top_k': 20,
+                'top_p': 0.8,
             },
-            timeout=(10, timeout),
-            stream=True,
-        ) as r:
-            r.raise_for_status()
-            for line in r.iter_lines(decode_unicode=True):
-                if not line:
-                    continue
-                try:
-                    data = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-
-                piece = data.get('response', '')
-                if piece:
-                    chunks.append(piece)
-                    token_count += 1
-
-                now = time.monotonic()
-                if piece and (now - last_report >= 1.0):
-                    elapsed = now - started
-                    rate = token_count / elapsed if elapsed else 0
-                    print(
-                        f'[OLLAMA] generating... chunks={token_count} | '
-                        f'{rate:.1f} chunks/s | elapsed={elapsed:.1f}s',
-                        flush=True,
-                    )
-                    last_report = now
-
-                if data.get('done'):
-                    elapsed = now - started
-                    print(
-                        f'[OLLAMA] generation complete | chunks={token_count} | '
-                        f'elapsed={elapsed:.1f}s',
-                        flush=True,
-                    )
-                    break
-    except requests.RequestException:
-        raise
+        },
+        timeout=(10, None),
+        stream=True,
+    ) as r:
+        r.raise_for_status()
+        for line in r.iter_lines(decode_unicode=True):
+            if not line:
+                continue
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            piece = data.get('response', '')
+            if piece:
+                chunks.append(piece)
+                chunk_count += 1
+            now = time.monotonic()
+            if piece and now - last_report >= 1.0:
+                elapsed = now - started
+                rate = chunk_count / elapsed if elapsed else 0
+                print(f'[OLLAMA] chunks={chunk_count} | {rate:.1f} chunks/s | elapsed={elapsed:.1f}s', flush=True)
+                last_report = now
+            if data.get('done'):
+                elapsed = now - started
+                print(f'[OLLAMA] complete | chunks={chunk_count} | elapsed={elapsed:.1f}s', flush=True)
+                break
 
     response = ''.join(chunks).strip()
     if not response:
@@ -101,36 +90,13 @@ def _valid_article(article):
     return all(isinstance(step, dict) and str(step.get('narration', '')).strip() for step in steps)
 
 
-def _prompt(title, retry=False):
-    retry_note = (
-        '\nIMPORTANT: The previous response was invalid. You MUST include a non-empty steps array. '
-        'Return exactly one JSON object and nothing else.\n'
-        if retry else ''
-    )
-    return f'''Create an ORIGINAL, accurate, spoken YouTube tutorial for: "{title}".
-Do not copy any existing article.
-{retry_note}
-Keep the response SHORT so it can be generated quickly: use 6-8 logical steps maximum, with 1-2 short spoken sentences per step.
-Return ONLY one valid JSON object using this exact structure:
-{{
-  "title": "publishable title",
-  "intro": "short hook",
-  "problem": "the problem this solves",
-  "steps": [
-    {{
-      "step_title": "short label",
-      "narration": "1-2 natural spoken sentences",
-      "visual_goal": "exactly what the viewer must see",
-      "interaction": "tap|long_press|swipe|press_buttons|type|none",
-      "target": "exact UI control or object",
-      "tip": "short optional useful tip"
-    }}
-  ],
-  "outro": "brief conclusion"
-}}
-Use at most 8 logical steps.
-Each step MUST have non-empty narration.
-Do not invent uncertain UI details. If a detail is uncertain, describe it generically and let the visual planner use a neutral instructional graphic.'''
+def _prompt(title):
+    return f'''Create a SHORT original spoken YouTube tutorial for: "{title}".
+Return ONLY valid JSON. Do not use markdown.
+Use exactly 5-6 logical steps. Keep every field extremely short.
+Schema:
+{{"title":"short title","intro":"one short sentence","problem":"one short sentence","steps":[{{"step_title":"label","narration":"one short spoken sentence","visual_goal":"what viewer sees","interaction":"tap|long_press|swipe|press_buttons|type|none","target":"control or object","tip":"short tip"}}],"outro":"one short sentence"}}
+Every step MUST have non-empty narration. Do not invent uncertain UI details; use a neutral visual description when needed.'''
 
 
 def generate_article(title, use_cache=True):
@@ -139,24 +105,19 @@ def generate_article(title, use_cache=True):
         with open(path, encoding='utf-8') as f:
             cached = json.load(f)
         if _valid_article(cached):
+            print('[OLLAMA] tutorial loaded from cache', flush=True)
             return cached
         try:
             os.remove(path)
         except OSError:
             pass
 
-    last_error = None
-    for attempt in range(2):
-        try:
-            raw = _call_ollama(_prompt(title, retry=attempt == 1))
-            article = _extract_json(raw)
-            if _valid_article(article):
-                os.makedirs(config.CACHE_DIR, exist_ok=True)
-                with open(path, 'w', encoding='utf-8') as f:
-                    json.dump(article, f, indent=2, ensure_ascii=False)
-                return article
-            last_error = ValueError('Ollama returned JSON without a valid non-empty steps array')
-        except (ValueError, json.JSONDecodeError, requests.RequestException) as exc:
-            last_error = exc
-
-    raise ValueError(f'Invalid tutorial returned for {title}: {last_error}')
+    raw = _call_ollama(_prompt(title))
+    article = _extract_json(raw)
+    if not _valid_article(article):
+        raise ValueError(f'Invalid tutorial returned for {title}')
+    article.setdefault('title', title)
+    os.makedirs(config.CACHE_DIR, exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(article, f, indent=2, ensure_ascii=False)
+    return article
