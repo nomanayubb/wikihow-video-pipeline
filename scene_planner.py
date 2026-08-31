@@ -3,17 +3,17 @@ import config
 
 
 def _path(title):
-    h = hashlib.sha256((title+'|scene-v4').encode()).hexdigest()[:16]
+    h = hashlib.sha256((title+'|scene-v5-fast').encode()).hexdigest()[:16]
     return os.path.join(config.CACHE_DIR, f'scenes_{h}.json')
 
 
 def _ask(prompt):
-    """Stream scene planning so the terminal always shows live progress; no read timeout."""
+    """Stream scene planning; only connection setup can time out."""
     started = time.monotonic()
     last_report = started
     chunks = []
     count = 0
-    print('[SCENES] generating scene plan...', flush=True)
+    print('[SCENES] generating scene plan... (no read timeout)', flush=True)
     with requests.post(
         config.OLLAMA_URL,
         json={
@@ -21,11 +21,11 @@ def _ask(prompt):
             'prompt': prompt,
             'stream': True,
             'format': 'json',
-            'keep_alive': '10m',
+            'keep_alive': config.OLLAMA_KEEP_ALIVE,
             'options': {
                 'temperature': 0.05,
-                'num_ctx': 3072,
-                'num_predict': 1300,
+                'num_ctx': config.OLLAMA_SCENE_CONTEXT,
+                'num_predict': config.OLLAMA_SCENE_PREDICT,
                 'top_k': 20,
                 'top_p': 0.8,
             },
@@ -73,26 +73,24 @@ def _parse(raw):
 def plan_scenes(article, use_cache=True):
     path = _path(article['title'])
     if use_cache and os.path.exists(path):
-        with open(path, encoding='utf-8') as f:
-            cached = json.load(f)
+        with open(path, encoding='utf-8') as f: cached = json.load(f)
         print('[SCENES] scene plan loaded from cache', flush=True)
         return cached
 
     prompt = f'''You are the visual director for a fully automated YouTube tutorial.
-Create exactly 10-12 distinct visual moments. No physical phone, screenshots, or recordings are available.
+Create exactly 10 visual moments. No physical phone, screenshots, or recordings are available.
 Every visual is a controlled phone UI animation, diagram, zoom, highlight, or card.
 TUTORIAL: {json.dumps(article, ensure_ascii=False)}
-Return ONLY JSON with this schema:
+Return ONLY JSON:
 {{"scenes":[{{"scene_title":"short","narration":"one short spoken sentence","visual_type":"phone_ui|button_demo|zoom|diagram|before_after|tip_card|title_card","screen":"short screen/state","target":"control or empty","action":"tap|long_press|swipe|press_buttons|zoom|none","callout":"short label or empty"}}]}}
-Use exactly 10-12 scenes. Keep every field short. Visuals must directly match narration.
-If exact UI is uncertain, use a neutral diagram instead of inventing details. Include intro, action sequence, result, and one useful tip.'''
+Use exactly 10 scenes. Keep every field short. Match each visual directly to narration.
+If exact UI is uncertain, use a neutral diagram. Include intro, action sequence, result, and one useful tip.'''
 
     data = _parse(_ask(prompt))
     scenes = data.get('scenes', [])
-    if not 10 <= len(scenes) <= 12:
-        raise ValueError(f'Expected 10-12 scenes, got {len(scenes)}')
+    if len(scenes) != 10:
+        raise ValueError(f'Expected exactly 10 scenes, got {len(scenes)}')
     result = {'title': article['title'], 'scenes': scenes}
     os.makedirs(config.CACHE_DIR, exist_ok=True)
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump(result, f, indent=2, ensure_ascii=False)
+    with open(path, 'w', encoding='utf-8') as f: json.dump(result, f, indent=2, ensure_ascii=False)
     return result
