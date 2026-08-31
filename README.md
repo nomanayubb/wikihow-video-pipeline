@@ -1,118 +1,119 @@
 # Topic-to-Video Pipeline
 
-Turns a list of topic titles into finished narrated videos, fully automated:
-original script written per topic → AI voice with word timing → matching
-stock images synced to narration → word-by-word animated captions burned in
-→ one mp4 per topic.
+Turns tutorial titles into finished narrated vertical videos without a physical
+phone, manual screenshots, or manual recording.
 
-This does **not** scrape WikiHow or any other site. It writes original
-content based on the topic title you give it, and sources images from
-Pexels' free, licensed stock photo library. That's what keeps it legally
-safe to run at scale.
+The pipeline creates an original tutorial script with Ollama, plans 15–20
+instructional scenes, renders deterministic phone/UI-style visuals and
+animations from the scene instructions, generates neural narration with
+word-level timing, burns synchronized captions, and assembles the final MP4.
 
-**Fully free to run** — article writing uses Ollama (a local LLM on your
-own machine, no API key, no per-use cost), voice uses edge-tts (free), and
-images use Pexels' free tier. Nothing in this pipeline requires a paid API.
+## Architecture
 
-## One-time setup
+`title → Ollama script → 15–20 scene storyboard → automated visuals → Edge TTS → synced captions → MP4`
 
-1. Install Python 3.10+ and ffmpeg:
-   ```bash
-   # ffmpeg (required by moviepy)
-   sudo apt install ffmpeg      # Linux
-   brew install ffmpeg          # Mac
-   # Windows: download from ffmpeg.org and add to PATH
+The visual engine intentionally does **not** pretend to be a real screenshot.
+When exact UI details are uncertain, the planner is instructed to use a neutral
+instructional diagram instead of inventing a UI state.
+
+## One-time setup on Windows
+
+1. Install Python 3.10+.
+2. Install Ollama from the official Ollama website.
+3. Pull the model:
+   ```powershell
+   ollama pull llama3.1
+   ```
+4. Verify it:
+   ```powershell
+   ollama list
+   ```
+   You should see `llama3.1:latest` (the code accepts the untagged `llama3.1`
+   name by default).
+5. From the repository folder install Python dependencies:
+   ```powershell
+   python -m pip install -r requirements.txt
    ```
 
-2. Install Python packages:
-   ```bash
-   pip install -r requirements.txt
-   ```
+`edge-tts` supplies narration and does not require a voice API key. MoviePy
+uses FFmpeg through `imageio-ffmpeg` for rendering.
 
-3. Install Ollama (free local LLM, for writing the articles):
-   - Download from https://ollama.com/download and install it
-   - Pull a model (one-time, a few GB download):
-     ```bash
-     ollama pull llama3.1
-     ```
-   - Ollama runs a local server automatically in the background after
-     install — nothing to start manually. It listens on
-     `http://localhost:11434`.
-   - Your machine needs ~8GB+ RAM free for `llama3.1`. If that's tight,
-     use a smaller model instead: `ollama pull llama3.2` (about 3GB, still
-     good for this) and set `OLLAMA_MODEL=llama3.2`.
+## Demo: one command
 
-4. Get one free key:
-   - **Pexels API key** (free, for step images): https://www.pexels.com/api/
+The default demo is:
 
-5. Set it as an environment variable (recommended) or paste into `config.py`:
-   ```bash
-   export PEXELS_API_KEY="..."
-   ```
+`How to customize the Lock Screen on iPhone 17 Pro Max`
 
-6. Test the pipeline on one topic:
-   ```bash
-   python video_builder.py
-   ```
-   This builds `output/test_video.mp4` from the Windows Update example.
-   Watch it before running the full batch — check voice, image relevance,
-   and caption timing look right, and adjust `config.py` (voice, video
-   size, font size, etc.) if needed.
+Run:
 
-## Daily use
+```powershell
+python run_demo.py
+```
 
-1. Replace the contents of `topics.txt` with your 100 new topic titles,
-   one per line (plain titles, not links — e.g.
-   `Easiest Ways to Uninstall a Problematic Windows Update`).
+Or choose another title:
 
-2. Run:
-   ```bash
-   python run_batch.py
-   ```
+```powershell
+python run_demo.py --title "How to take a screenshot on iPhone 17 Pro Max"
+```
 
-3. Walk away. Finished videos land in `output/`, numbered and named after
-   each topic (`001_easiest-ways-to-uninstall-a-problematic-windows-update.mp4`).
-   Progress and any errors are logged to `logs/run_<timestamp>.log`.
+The result is written to `output/demo.mp4` unless `--output` is supplied.
 
-If the run gets interrupted (crash, closed laptop, Ctrl+C), just run
-`python run_batch.py` again — it skips any topic that already has a
-finished video in `output/` and picks up where it left off.
+## Automated tests
 
-## Cost per day (100 videos)
+Run the offline tests locally:
 
-- **Ollama**: $0 — runs on your own machine, no API, no per-use charge.
-- **edge-tts**: $0 — no key.
-- **Pexels**: $0 — free tier.
+```powershell
+python -m pytest -q tests
+```
 
-The only real cost is your own electricity and time — generating 100
-articles locally will use your CPU/GPU for a while. See "Tuning" below if
-it's too slow.
+GitHub Actions also compiles the project and runs these tests automatically.
+These tests validate the visual engine and the 15–20 scene contract without
+requiring a physical iPhone or external image API.
 
-## Tuning
+## Batch mode
 
-All the knobs live in `config.py`:
-- `TTS_VOICE` — swap narrator voice (list more with `edge-tts --list-voices`)
-- `VIDEO_WIDTH` / `VIDEO_HEIGHT` — vertical (Shorts/Reels) vs landscape
-- `MAX_STEPS_PER_ARTICLE` — cap video length
-- `CAPTION_SIZE` / `CAPTION_HIGHLIGHT_COLOR` — caption look
-- `OLLAMA_MODEL` — smaller model = faster but slightly lower quality
-  writing. `llama3.2` is a good speed/quality tradeoff if `llama3.1` feels
-  slow on your machine.
+Put one tutorial title per line in `topics.txt`, then run:
 
-If article generation feels slow at 100/day: it's running locally on your
-CPU/GPU, so speed depends on your hardware. A machine with a decent GPU
-will be much faster than CPU-only. Since articles are cached by title
-(`cache/article_*.json`), re-running the same topic twice costs nothing
-the second time.
+```powershell
+python run_batch.py
+```
+
+The batch runner skips completed outputs and logs failures so an interrupted
+run can be resumed.
+
+## Configuration
+
+Settings are in `config.py` and can also be overridden with environment
+variables:
+
+- `OLLAMA_URL` — default `http://localhost:11434/api/generate`
+- `OLLAMA_MODEL` — default `llama3.1`
+- `TTS_VOICE` — default `en-US-GuyNeural`
+- `TTS_RATE` — default `+0%`
+- `VIDEO_WIDTH` / `VIDEO_HEIGHT` — default 1080×1920
+- `FPS` — default 30
+- `MAX_STEPS_PER_ARTICLE` — default 12
+- `MIN_VISUAL_SCENES` / `MAX_VISUAL_SCENES` — 15 / 20
+
+## Important limitation
+
+The project can automate the creation of instructional visuals, but it cannot
+guarantee pixel-identical replicas of every iOS screen without a trusted source
+of current screen specifications/assets. The planner therefore avoids claiming
+an invented screen is an exact Apple screenshot. This is intentional: accuracy
+is preferred over fabricated UI.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `config.py` | All settings and keys |
-| `generate_articles.py` | Topic title → original article JSON via Ollama (cached) |
-| `tts.py` | Text → voice audio + word timestamps |
-| `image_sourcer.py` | Step keywords → matching stock photo (cached) |
-| `video_builder.py` | Assembles one article into one mp4 |
-| `run_batch.py` | **Daily entry point** — runs all 100 topics |
-| `topics.txt` | Your daily input — one topic per line |
+| `config.py` | Central configuration |
+| `generate_articles.py` | Title → original tutorial JSON via Ollama |
+| `scene_planner.py` | Tutorial → 15–20 visual scene storyboard |
+| `visual_engine.py` | Scene → automated instructional visual |
+| `tts.py` | Narration → MP3 + word timestamps |
+| `video_builder.py` | Visuals + narration + captions → MP4 |
+| `run_demo.py` | One-command local demo |
+| `run_batch.py` | Batch entry point |
+| `tests/` | Offline automated tests |
+| `topics.txt` | Tutorial titles |
