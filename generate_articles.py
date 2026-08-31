@@ -9,17 +9,19 @@ import config
 
 
 def _cache_path(title):
-    h = hashlib.sha256((title + '|article-v2-fast').encode('utf-8')).hexdigest()[:16]
+    h = hashlib.sha256((title + '|article-v3-optimized').encode('utf-8')).hexdigest()[:16]
     return os.path.join(config.CACHE_DIR, f'article_{h}.json')
 
 
-def _call_ollama(prompt):
-    """Stream Ollama output; only the initial connection has a timeout."""
+def _call_ollama(prompt, progress=None):
+    """Stream Ollama output with useful live progress and a configurable stall timeout."""
     started = time.monotonic()
     chunks = []
     chunk_count = 0
+    char_count = 0
     last_report = started
-    print('[OLLAMA] generating... (no read timeout)', flush=True)
+    progress = progress or (lambda message: print(message, flush=True))
+    print('[OLLAMA] generating...', flush=True)
 
     with requests.post(
         config.OLLAMA_URL,
@@ -37,7 +39,7 @@ def _call_ollama(prompt):
                 'top_p': 0.8,
             },
         },
-        timeout=(10, None),
+        timeout=(config.OLLAMA_CONNECT_TIMEOUT, config.OLLAMA_READ_TIMEOUT),
         stream=True,
     ) as r:
         r.raise_for_status()
@@ -52,17 +54,19 @@ def _call_ollama(prompt):
             if piece:
                 chunks.append(piece)
                 chunk_count += 1
+                char_count += len(piece)
             now = time.monotonic()
-            if piece and now - last_report >= 1.0:
+            if piece and now - last_report >= config.OLLAMA_PROGRESS_INTERVAL:
                 elapsed = now - started
-                rate = chunk_count / elapsed if elapsed else 0
-                print(f'[OLLAMA] chunks={chunk_count} | {rate:.1f} chunks/s | elapsed={elapsed:.1f}s', flush=True)
+                rate = char_count / elapsed if elapsed else 0
+                progress(f'[OLLAMA] chunks={chunk_count} | chars={char_count} | {rate:.0f} chars/s | elapsed={elapsed:.1f}s')
                 last_report = now
             if data.get('done'):
-                elapsed = now - started
-                print(f'[OLLAMA] complete | chunks={chunk_count} | elapsed={elapsed:.1f}s', flush=True)
                 break
 
+    elapsed = time.monotonic() - started
+    rate = char_count / elapsed if elapsed else 0
+    print(f'[OLLAMA] complete | chunks={chunk_count} | chars={char_count} | {rate:.0f} chars/s | elapsed={elapsed:.1f}s', flush=True)
     response = ''.join(chunks).strip()
     if not response:
         raise ValueError('Ollama returned an empty response')
@@ -99,25 +103,30 @@ Schema:
 Every step MUST have non-empty narration. Do not invent uncertain UI details; use a neutral visual description when needed.'''
 
 
-def generate_article(title, use_cache=True):
+def generate_article(title, use_cache=True, progress=None):
     path = _cache_path(title)
     if use_cache and os.path.exists(path):
-        with open(path, encoding='utf-8') as f:
-            cached = json.load(f)
-        if _valid_article(cached):
-            print('[OLLAMA] tutorial loaded from cache', flush=True)
-            return cached
+        try:
+            with open(path, encoding='utf-8') as f:
+                cached = json.load(f)
+            if _valid_article(cached):
+                print('[OLLAMA] tutorial loaded from cache', flush=True)
+                return cached
+        except (OSError, json.JSONDecodeError):
+            pass
         try:
             os.remove(path)
         except OSError:
             pass
 
-    raw = _call_ollama(_prompt(title))
+    raw = _call_ollama(_prompt(title), progress=progress)
     article = _extract_json(raw)
     if not _valid_article(article):
         raise ValueError(f'Invalid tutorial returned for {title}')
     article.setdefault('title', title)
     os.makedirs(config.CACHE_DIR, exist_ok=True)
-    with open(path, 'w', encoding='utf-8') as f:
+    tmp_path = path + '.tmp'
+    with open(tmp_path, 'w', encoding='utf-8') as f:
         json.dump(article, f, indent=2, ensure_ascii=False)
+    os.replace(tmp_path, path)
     return article
