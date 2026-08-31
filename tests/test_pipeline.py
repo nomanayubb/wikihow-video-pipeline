@@ -1,6 +1,14 @@
 import os
+import sys
 import tempfile
+
 from PIL import Image
+
+# Make repository-root modules importable when pytest is invoked from CI.
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
 import config
 from visual_engine import render
 
@@ -23,7 +31,17 @@ def test_visual_engine_output():
 
 
 def test_scene_contract():
-    scenes = [{'narration': 'Do this', 'visual_type': 'button_demo', 'screen': 'Settings', 'target': 'Button', 'action': 'tap', 'callout': ''} for _ in range(15)]
-    assert 15 <= len(scenes) <= 20
+    scenes = [
+        {
+            'narration': 'Do this',
+            'visual_type': 'button_demo',
+            'screen': 'Settings',
+            'target': 'Button',
+            'action': 'tap',
+            'callout': '',
+        }
+        for _ in range(12)
+    ]
+    assert 12 <= len(scenes) <= 15
     for s in scenes:
         assert s['narration'] and s['visual_type'] and s['screen'] and s['action']
