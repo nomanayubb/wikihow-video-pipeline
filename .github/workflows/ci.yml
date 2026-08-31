@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest
+      - name: Compile Python files
+        run: python -m compileall -q .
+      - name: Smoke test visual engine
+        run: |
+          python - <<'PY'
+          import os, tempfile
+          import config
+          from visual_engine import render
+          scene = {
+              'scene_title': 'Screenshot buttons',
+              'screen': 'iPhone screenshot tutorial',
+              'target': 'Side button + Volume Up',
+              'action': 'press_buttons',
+              'callout': 'Press both buttons together'
+          }
+          with tempfile.TemporaryDirectory() as d:
+              path = os.path.join(d, 'scene.png')
+              render(scene, path)
+              from PIL import Image
+              im = Image.open(path)
+              assert im.size == (config.VIDEO_WIDTH, config.VIDEO_HEIGHT)
+              assert im.format == 'PNG'
+          PY
