@@ -12,15 +12,16 @@ import config
 from scene_planner import _valid_scene
 from tts import synthesize_many
 from visual_engine import render
+from vocabulary_generator import _valid
 
 
 def test_visual_engine_output():
     scene = {
-        'scene_title': 'Screenshot buttons',
-        'screen': 'iPhone screenshot tutorial',
-        'target': 'Side button + Volume Up',
-        'action': 'press_buttons',
-        'callout': 'Press both buttons together',
+        'scene_title': 'Illustration test',
+        'screen': 'Vocabulary concept',
+        'target': 'Meaning',
+        'action': 'none',
+        'callout': 'Test',
     }
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, 'scene.png')
@@ -31,14 +32,26 @@ def test_visual_engine_output():
             assert im.format == 'PNG'
 
 
+def test_vocabulary_lesson_contract():
+    lesson = {
+        'italian': 'casa',
+        'english': 'house',
+        'part_of_speech': 'noun',
+        'explanation': 'A place where people live.',
+        'example': 'La casa è grande.',
+        'image_prompt': 'A warm welcoming home.',
+    }
+    assert _valid(lesson)
+
+
 def test_scene_contract():
     scenes = [
         {
             'narration': 'Do this',
-            'visual_type': 'button_demo',
-            'screen': 'Settings',
-            'target': 'Button',
-            'action': 'tap',
+            'visual_type': 'diagram',
+            'screen': 'Concept',
+            'target': 'Meaning',
+            'action': 'none',
             'callout': '',
         }
         for _ in range(config.MIN_VISUAL_SCENES)
