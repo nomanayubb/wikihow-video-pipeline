@@ -1,7 +1,23 @@
-# Put one Italian word or short phrase per line. The vocabulary builder translates them to English.
-# Replace these examples with your 100 words.
-amore
+# Put exactly 20 Italian words here, one per line.
+# Replace these examples with your own 20 words.
+
 casa
-acqua
 sole
-luna
+mare
+amicizia
+coraggio
+libertà
+felice
+veloce
+lento
+bello
+sogno
+viaggio
+cucina
+montagna
+pioggia
+speranza
+gentile
+forte
+silenzio
+meraviglia
