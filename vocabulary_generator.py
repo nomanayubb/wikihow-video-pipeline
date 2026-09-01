@@ -1,4 +1,4 @@
-"""Reliable per-word Italian-to-English lesson generation with caching."""
+"""Reliable per-word Italian-to-English lesson generation with streaming, retries, and caching."""
 import hashlib
 import json
 import os
@@ -14,12 +14,12 @@ FIELDS = ("italian", "english", "part_of_speech", "explanation", "example", "ima
 
 def _cache_path(words):
     key = "\n".join(w.strip().casefold() for w in words)
-    digest = hashlib.sha256((key + "|vocab-v4").encode("utf-8")).hexdigest()[:20]
+    digest = hashlib.sha256((key + "|vocab-v5").encode("utf-8")).hexdigest()[:20]
     return os.path.join(config.CACHE_DIR, "lessons", f"{digest}.json")
 
 
 def _word_cache_path(word):
-    digest = hashlib.sha256((word.strip().casefold() + "|word-v4").encode("utf-8")).hexdigest()[:20]
+    digest = hashlib.sha256((word.strip().casefold() + "|word-v5").encode("utf-8")).hexdigest()[:20]
     return os.path.join(config.CACHE_DIR, "lesson_words", f"{digest}.json")
 
 
@@ -108,14 +108,10 @@ def _load_cached_word(word):
 
 
 def _generate_one(word):
-    cached = _load_cached_word(word)
-    if cached is not None:
-        return cached, True
-
     payload = {
         "model": config.OLLAMA_MODEL,
         "prompt": _prompt_word(word),
-        "stream": False,
+        "stream": True,
         "format": "json",
         "keep_alive": config.OLLAMA_KEEP_ALIVE,
         "options": {
@@ -124,18 +120,37 @@ def _generate_one(word):
             "num_predict": min(config.OLLAMA_VOCAB_PREDICT, 700),
         },
     }
-    attempts = max(1, int(getattr(config, "OLLAMA_RETRIES", 3)))
+    attempts = max(1, int(getattr(config, "OLLAMA_RETRIES", 2)))
     last_error = None
     for attempt in range(1, attempts + 1):
         try:
             started = time.monotonic()
-            response = requests.post(
+            chunks = 0
+            chars = 0
+            parts = []
+            with requests.post(
                 config.OLLAMA_URL,
                 json=payload,
+                stream=True,
                 timeout=(config.OLLAMA_CONNECT_TIMEOUT, config.OLLAMA_READ_TIMEOUT),
-            )
-            response.raise_for_status()
-            lesson = _extract_json(response.json().get("response", ""))
+            ) as response:
+                response.raise_for_status()
+                for line in response.iter_lines(decode_unicode=True):
+                    if not line:
+                        continue
+                    packet = json.loads(line)
+                    fragment = packet.get("response", "")
+                    if fragment:
+                        parts.append(fragment)
+                        chunks += 1
+                        chars += len(fragment)
+                        if chunks == 1 or chunks % 10 == 0:
+                            elapsed = time.monotonic() - started
+                            rate = chars / elapsed if elapsed else 0.0
+                            print(f"[OLLAMA] {word}: chunks={chunks} chars={chars} rate={rate:.0f}/s elapsed={elapsed:.1f}s", flush=True)
+                    if packet.get("done"):
+                        break
+            lesson = _extract_json("".join(parts))
             if isinstance(lesson, dict) and "words" in lesson:
                 items = lesson.get("words") or []
                 if len(items) != 1:
@@ -175,18 +190,13 @@ def generate_lessons(words, use_cache=True, progress=None, expected_count=None):
     total = len(words)
     print(f"[LESSONS] generating {total} lessons with Ollama, one word at a time", flush=True)
     for index, word in enumerate(words, 1):
-        # Re-check word cache even when the set cache is absent/incomplete.
-        if use_cache:
-            lesson = _load_cached_word(word)
-            cached = lesson is not None
-            if lesson is None:
-                lesson, cached = _generate_one(word)
-        else:
+        lesson = _load_cached_word(word) if use_cache else None
+        cached = lesson is not None
+        if lesson is None:
             lesson, cached = _generate_one(word)
         lessons.append(lesson)
         elapsed = time.monotonic() - started
-        status = "cache" if cached else "Ollama"
-        print(f"[LESSONS] {index}/{total} {word} | {status} | elapsed={elapsed:.1f}s", flush=True)
+        print(f"[LESSONS] {index}/{total} {word} | {'cache' if cached else 'Ollama'} | elapsed={elapsed:.1f}s", flush=True)
         if progress:
             progress(index, total, word)
 
