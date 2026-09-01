@@ -1,77 +1,115 @@
-# Automated Italian Vocabulary Video Pipeline
+# Italian Vocabulary Video Pipeline
 
-This repository focuses on **long-form educational vocabulary videos**, not fake phone/UI tutorials.
+A production-oriented, code-driven system for turning an Italian word list into a polished English-language YouTube vocabulary video.
 
-Give the pipeline exactly 20 Italian words. It automatically translates and explains them in English, creates a dedicated AI illustration for every word, lays out a polished 16:9 lesson card, narrates each lesson, adds subtle motion, creates a copyright-safe procedural background track, and renders a YouTube-ready MP4.
+## What the program does
 
-Each word gets about 17 seconds by default, giving about 5:40 of vocabulary lessons for 20 words plus intro/outro. Set `WORD_TARGET_SECONDS=20` for about 6:40. Use about 11–12 seconds per word for a strict four-minute version.
+You provide a plain text file with **20 Italian words**, one per line. The pipeline then:
 
-Every segment contains the Italian word, English translation on the right, part of speech, natural English explanation, example sentence, a dedicated generated illustration, English narration, subtle motion, and quiet background music. Concrete nouns receive an illustration of the thing; abstract nouns receive a visual metaphor; adjectives receive a scene demonstrating the quality.
+1. validates the input and rejects duplicates;
+2. asks Ollama for an English lesson for every word;
+3. creates a semantic image prompt tailored to the word type;
+4. generates one dedicated AI illustration per word;
+5. creates English narration;
+6. builds a professional 16:9 split-screen lesson card with Italian on the left visual and English explanation on the right;
+7. applies subtle motion so the video is not a dead slideshow;
+8. adds a quiet procedural background soundtrack;
+9. assembles and encodes the final MP4 with atomic output replacement.
 
-The old generic iPhone UI renderer is no longer the visual concept for this workflow. The new structure is **word → meaning → dedicated AI illustration → English explanation → narration → motion → music**, making it reusable for hundreds of vocabulary videos.
+There is **no fake iPhone screen generator in the production path**.
 
-## Run
+## Input
 
-Put exactly 20 Italian words in `italian_words.txt`, one per line:
+`italian_words.txt` contains exactly 20 words:
+
+```text
+casa
+sole
+mare
+amicizia
+...
+```
+
+Comments beginning with `#` and blank lines are ignored.
+
+A five-word `demo_words.txt` is included so the design can be tested without replacing the production list.
+
+## Timing
+
+The default target is **18 seconds per word**. Twenty words therefore provide about 6 minutes of vocabulary content before a short intro and outro. Set `WORD_TARGET_SECONDS=20` for about 6:40 of word segments.
+
+The program never assumes that the generated narration has exactly the target length. Each visual segment lasts at least the configured target, and longer narration is allowed to continue naturally.
+
+## Run the demo
+
+Install dependencies, start Ollama, configure an image provider, then run:
 
 ```powershell
 python run_demo.py
 ```
 
-Or:
+The demo reads `demo_words.txt` and writes `output/demo_vocabulary.mp4`.
+
+For production:
 
 ```powershell
-python run_demo.py --words my_words.txt --title "20 Italian Words for Beginners"
+python run_demo.py --words italian_words.txt --title "20 Italian Words You Should Know" --mood meditative
 ```
 
 ## AI images
 
-Set `OPENAI_API_KEY` to use the configured OpenAI image generator, or configure `IMAGE_GENERATOR_URL` for a local/custom image service. Each word's image is cached.
+The current image adapter supports the OpenAI Images API and a generic custom JSON/image endpoint. Set one of:
 
 ```powershell
 $env:OPENAI_API_KEY="your-key"
-python run_demo.py
 ```
 
-`IMAGE_MODEL`, `IMAGE_SIZE`, and `IMAGE_QUALITY` are configurable.
+or:
+
+```powershell
+$env:IMAGE_GENERATOR_URL="http://localhost:8188/generate"
+```
+
+`IMAGE_PROVIDER=auto` tries OpenAI first when a key is present, then the custom endpoint. Images are cached by prompt hash, so reruns do not regenerate successful images.
+
+The OpenAI image integration currently defaults to `gpt-image-2`, the image-generation model listed in the current OpenAI model catalog. citeturn646426search0
 
 ## Music
 
-Background music is generated locally from synthesized tones/chords rather than downloading a commercial song. Choose `meditative`, `funny`, or `adventure` with `MUSIC_MOOD`. Narration remains dominant.
-
-## Main configuration
-
-- `VOCAB_WORD_COUNT` — 20
-- `WORD_TARGET_SECONDS` — 17
-- `TTS_VOICE` — `en-US-GuyNeural`
-- `TTS_CONCURRENCY` — 4
-- `OLLAMA_MODEL` — `llama3.1`
-- `OLLAMA_KEEP_ALIVE` — `30m`
-- `IMAGE_PROVIDER` — `auto`, `openai`, or `custom`
-- `IMAGE_MODEL` — `gpt-image-2`
-- `IMAGE_SIZE` — `1536x1024`
-- `IMAGE_QUALITY` — `medium`
-- `MUSIC_MOOD` — `meditative`, `funny`, or `adventure`
-- `MUSIC_VOLUME` — `0.12`
-- `VIDEO_WIDTH` / `VIDEO_HEIGHT` — `1920×1080`
-- `FPS` — `30`
-- `VIDEO_BITRATE` — `8M`
+Music is synthesized locally from code, so the pipeline does not download commercial tracks. Select one of `meditative`, `funny`, or `adventure` with `--mood` or `MUSIC_MOOD`.
 
 ## Batch production
 
-`run_batch.py` accepts jobs in `topics.txt` using:
+`topics.txt` contains one job per line:
 
 ```text
+demo_words.txt | Italian Vocabulary Demo
 italian_words.txt | 20 Italian Words You Should Know
-another_words.txt | Italian Vocabulary for Travel
+sets/travel.txt | Italian Travel Vocabulary
 ```
 
-Each referenced word file must contain exactly 20 words, so the same design can be reused for dozens or hundreds of videos without manual editing.
+Each job is independent. A failed video does not stop later jobs, and completed non-empty MP4 files are skipped on a rerun.
 
-## Tests
+## Main environment settings
+
+- `OLLAMA_URL`, `OLLAMA_MODEL`, `OLLAMA_KEEP_ALIVE`
+- `OLLAMA_CONNECT_TIMEOUT`, `OLLAMA_READ_TIMEOUT`
+- `OLLAMA_VOCAB_CONTEXT`, `OLLAMA_VOCAB_PREDICT`
+- `VOCAB_WORD_COUNT` — default 20
+- `WORD_TARGET_SECONDS` — default 18
+- `TTS_VOICE`, `TTS_RATE`, `TTS_CONCURRENCY`
+- `IMAGE_PROVIDER`, `IMAGE_MODEL`, `IMAGE_SIZE`, `IMAGE_QUALITY`
+- `IMAGE_CONCURRENCY`, `IMAGE_RETRIES`
+- `MUSIC_MOOD`, `MUSIC_BPM`, `MUSIC_VOLUME`
+- `VIDEO_WIDTH`, `VIDEO_HEIGHT`, `FPS`, `VIDEO_BITRATE`
+
+## Validation
+
+Run:
 
 ```powershell
+python -m compileall -q .
 python -m pytest -q tests
 ```
 
-Offline tests do not call Ollama or the image API. A production render requires Ollama and an image-generation provider.
+The automated tests cover input validation, lesson schema validation, card rendering, and safe empty TTS batches. Production rendering still depends on your local Ollama and configured image-generation service being reachable; no software can honestly guarantee zero future failures from external services.
