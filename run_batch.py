@@ -1,13 +1,12 @@
 """Batch renderer for many independent Italian vocabulary video jobs."""
-import os
 import re
-import sys
 import time
 import traceback
 from datetime import datetime
 from pathlib import Path
 
 import config
+from vocabulary_generator import load_words
 from vocabulary_video import build_video
 
 
@@ -15,20 +14,24 @@ def _slug(text):
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:80] or "vocabulary-video"
 
 
-def load_jobs(path):
-    source = Path(path)
-    if not source.is_file():
-        raise FileNotFoundError(f"Batch job file not found: {path}")
+def load_jobs(path=None):
+    manifest = Path(path or config.TOPICS_FILE)
+    if not manifest.is_file():
+        raise FileNotFoundError(f"Batch manifest not found: {manifest}")
     jobs = []
-    for raw in source.read_text(encoding="utf-8-sig").splitlines():
+    for raw in manifest.read_text(encoding="utf-8-sig").splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
         parts = [part.strip() for part in line.split("|", 1)]
         words_path = Path(parts[0])
         if not words_path.is_absolute():
-            words_path = source.parent / words_path
-        title = parts[1] if len(parts) == 2 and parts[1] else config.VOCAB_TITLE
+            words_path = manifest.parent / words_path
+        if not words_path.is_file():
+            raise FileNotFoundError(f"Vocabulary file not found: {words_path}")
+        # Validate the 20-word production contract before expensive generation.
+        load_words(str(words_path), expected_count=config.VOCAB_WORD_COUNT)
+        title = parts[1] if len(parts) == 2 and parts[1] else f"{config.VOCAB_WORD_COUNT} Italian Words"
         jobs.append((words_path, title))
     if not jobs:
         raise ValueError("No batch jobs found")
@@ -36,7 +39,7 @@ def load_jobs(path):
 
 
 def main():
-    jobs = load_jobs("topics.txt")
+    jobs = load_jobs()
     Path(config.OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
     Path(config.LOGS_DIR).mkdir(parents=True, exist_ok=True)
     log_path = Path(config.LOGS_DIR) / f"batch_{datetime.now():%Y%m%d_%H%M%S}.log"
@@ -56,9 +59,9 @@ def main():
                 skipped += 1
                 continue
             started = time.monotonic()
-            log(f"[{index}/{len(jobs)}] START {title}")
+            log(f"[{index}/{len(jobs)}] START {title} | source={words_path}")
             try:
-                build_video(title, str(output), str(words_path))
+                build_video(title, str(output), str(words_path), expected_count=config.VOCAB_WORD_COUNT)
                 log(f"[{index}/{len(jobs)}] DONE {output} in {time.monotonic() - started:.0f}s")
                 ok += 1
             except KeyboardInterrupt:
