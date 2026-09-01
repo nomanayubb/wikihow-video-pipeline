@@ -34,12 +34,13 @@ async def _synthesize(text: str, out_path: str, voice: str, rate: str):
                 pass
 
 
-async def _one(index, text, out_path, voice, rate, semaphore):
+async def _synthesize_with_retries(index, text, out_path, voice, rate, semaphore):
     async with semaphore:
         last_error = None
         for attempt in range(config.TTS_RETRIES):
             try:
-                return index, await _synthesize(text, out_path, voice, rate)
+                words = await _synthesize(text, out_path, voice, rate)
+                return index, words
             except Exception as exc:
                 last_error = exc
                 if attempt + 1 < config.TTS_RETRIES:
@@ -47,10 +48,16 @@ async def _one(index, text, out_path, voice, rate, semaphore):
         raise RuntimeError(f"TTS failed after {config.TTS_RETRIES} attempts for item {index + 1}: {last_error}") from last_error
 
 
+async def _synthesize_single(text, out_path, voice, rate):
+    semaphore = asyncio.Semaphore(1)
+    _, words = await _synthesize_with_retries(0, text, out_path, voice, rate, semaphore)
+    return words
+
+
 async def _synthesize_many(items, voice, rate, max_concurrency):
     semaphore = asyncio.Semaphore(max(1, max_concurrency))
     tasks = [
-        asyncio.create_task(_one(index, text, out_path, voice, rate, semaphore))
+        asyncio.create_task(_synthesize_with_retries(index, text, out_path, voice, rate, semaphore))
         for index, (text, out_path) in enumerate(items)
     ]
     results = await asyncio.gather(*tasks)
@@ -61,7 +68,7 @@ def synthesize(text: str, out_path: str, voice: str = None, rate: str = None) ->
     voice = voice or config.TTS_VOICE
     rate = rate or config.TTS_RATE
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-    return asyncio.run(_one(0, text, out_path, voice, rate, asyncio.Semaphore(1))).__iter__().__next__()[1]
+    return asyncio.run(_synthesize_single(text, out_path, voice, rate))
 
 
 def synthesize_many(items, voice: str = None, rate: str = None, max_concurrency: int = None) -> list:
