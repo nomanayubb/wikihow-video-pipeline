@@ -28,10 +28,13 @@ OLLAMA_VOCAB_PREDICT = _int("OLLAMA_VOCAB_PREDICT", 3000)
 TTS_VOICE = os.environ.get("TTS_VOICE", "en-US-GuyNeural")
 TTS_RATE = os.environ.get("TTS_RATE", "+0%")
 TTS_CONCURRENCY = _int("TTS_CONCURRENCY", 4)
+TTS_RETRIES = _int("TTS_RETRIES", 3, 1)
 WORD_TARGET_SECONDS = _float("WORD_TARGET_SECONDS", 18.0, 5.0)
 VOCAB_WORD_COUNT = _int("VOCAB_WORD_COUNT", 20)
 VOCAB_TITLE = os.environ.get("VOCAB_TITLE", "20 Italian Words You Should Know")
 VOCAB_FILE = os.environ.get("VOCAB_FILE", "italian_words.txt")
+DEMO_WORDS_FILE = os.environ.get("DEMO_WORDS_FILE", "demo_words.txt")
+TOPICS_FILE = os.environ.get("TOPICS_FILE", "topics.txt")
 
 IMAGE_PROVIDER = os.environ.get("IMAGE_PROVIDER", "auto").lower()
 IMAGE_MODEL = os.environ.get("IMAGE_MODEL", "gpt-image-2")
@@ -40,7 +43,7 @@ IMAGE_QUALITY = os.environ.get("IMAGE_QUALITY", "medium")
 IMAGE_GENERATOR_URL = os.environ.get("IMAGE_GENERATOR_URL", "")
 IMAGE_GENERATOR_TIMEOUT = _float("IMAGE_GENERATOR_TIMEOUT", 180, 10)
 IMAGE_CONCURRENCY = _int("IMAGE_CONCURRENCY", 3)
-IMAGE_RETRIES = _int("IMAGE_RETRIES", 2, 0)
+IMAGE_RETRIES = _int("IMAGE_RETRIES", 3, 1)
 
 MUSIC_MOOD = os.environ.get("MUSIC_MOOD", "meditative").lower()
 MUSIC_BPM = _int("MUSIC_BPM", 68, 40)
@@ -61,7 +64,7 @@ SKIP_IF_OUTPUT_EXISTS = True
 MIN_WORDS = _int("MIN_WORDS", 4)
 MAX_WORDS = _int("MAX_WORDS", 100)
 
-if MIN_WORDS > VOCAB_WORD_COUNT:
-    raise ValueError("MIN_WORDS cannot exceed VOCAB_WORD_COUNT")
+if MIN_WORDS > MAX_WORDS:
+    raise ValueError("MIN_WORDS cannot exceed MAX_WORDS")
 if WORD_TARGET_SECONDS * VOCAB_WORD_COUNT < 180:
-    raise ValueError("The default word timing must produce at least a 3-minute 20-word lesson set")
+    raise ValueError("WORD_TARGET_SECONDS must keep a 20-word production video at least 3 minutes")
