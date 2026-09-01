@@ -1,4 +1,4 @@
-"""Run one complete tutorial-video demo using the local Ollama instance."""
+"""Generate one long-form Italian vocabulary YouTube video."""
 import argparse
 import os
 import sys
@@ -6,25 +6,26 @@ import sys
 import config
 from video_builder import build_video
 
-DEFAULT_TITLE = "How to customize the Lock Screen on iPhone 17 Pro Max"
-
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate one automated tutorial video")
-    parser.add_argument("--title", default=DEFAULT_TITLE)
+    parser = argparse.ArgumentParser(description="Generate an automated Italian vocabulary video")
+    parser.add_argument("--words", default=config.VOCAB_FILE, help="Text file containing exactly 20 Italian words")
     parser.add_argument("--output", default=None)
+    parser.add_argument("--title", default=config.VOCAB_TITLE)
     args = parser.parse_args()
 
-    output = args.output or os.path.join(config.OUTPUT_DIR, "demo.mp4")
+    output = args.output or os.path.join(config.OUTPUT_DIR, "italian_vocabulary.mp4")
     os.makedirs(config.OUTPUT_DIR, exist_ok=True)
     print(f"Generating: {args.title}")
+    print(f"Words: {args.words} | count must be {config.VOCAB_WORD_COUNT}")
     print(f"Ollama: {config.OLLAMA_URL} | model: {config.OLLAMA_MODEL}")
+    print(f"Image provider: {config.IMAGE_PROVIDER} | model: {config.IMAGE_MODEL}")
     try:
-        path = build_video(args.title, output)
+        path = build_video(args.title, output, args.words)
     except Exception as exc:
-        print(f"DEMO FAILED: {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(f"VIDEO FAILED: {type(exc).__name__}: {exc}", file=sys.stderr)
         raise
-    print(f"DEMO COMPLETE: {path}")
+    print(f"VIDEO COMPLETE: {path}")
     return 0
 
 
