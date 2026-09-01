@@ -1,3 +1,2 @@
-# One job per line: word_file.txt | YouTube title
-demo_words.txt | Italian Vocabulary Demo — Learn Through Stories
-# italian_words.txt | 20 Italian Words You Should Know
+# Each line: path-to-word-file | YouTube title
+italian_words.txt | 20 Italian Words You Should Know
