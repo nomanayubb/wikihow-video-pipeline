@@ -1,0 +1,22 @@
+# Production input: exactly 20 Italian words, one per line.
+# Replace these demo words with your own words before production.
+casa
+sole
+mare
+amicizia
+coraggio
+libertà
+felice
+veloce
+lento
+bello
+sogno
+viaggio
+cucina
+montagna
+pioggia
+speranza
+gentile
+forte
+silenzio
+meraviglia

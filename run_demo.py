@@ -1,30 +1,26 @@
-"""Run one complete tutorial-video demo using the local Ollama instance."""
+"""Command-line entry point for the five-word demo or a custom vocabulary file."""
 import argparse
 import os
-import sys
 
 import config
-from video_builder import build_video
-
-DEFAULT_TITLE = "How to customize the Lock Screen on iPhone 17 Pro Max"
+from vocabulary_video import build_video
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate one automated tutorial video")
-    parser.add_argument("--title", default=DEFAULT_TITLE)
-    parser.add_argument("--output", default=None)
+    parser = argparse.ArgumentParser(description="Create a polished Italian-to-English vocabulary video")
+    parser.add_argument("--words", default=config.DEMO_WORDS_FILE, help="Italian word file; one word per line")
+    parser.add_argument("--output", default=os.path.join(config.OUTPUT_DIR, "demo_vocabulary.mp4"))
+    parser.add_argument("--title", default="Italian Vocabulary — Learn Through Stories")
+    parser.add_argument("--mood", choices=("meditative", "funny", "adventure"), default=config.MUSIC_MOOD)
     args = parser.parse_args()
-
-    output = args.output or os.path.join(config.OUTPUT_DIR, "demo.mp4")
-    os.makedirs(config.OUTPUT_DIR, exist_ok=True)
-    print(f"Generating: {args.title}")
-    print(f"Ollama: {config.OLLAMA_URL} | model: {config.OLLAMA_MODEL}")
-    try:
-        path = build_video(args.title, output)
-    except Exception as exc:
-        print(f"DEMO FAILED: {type(exc).__name__}: {exc}", file=sys.stderr)
-        raise
-    print(f"DEMO COMPLETE: {path}")
+    config.MUSIC_MOOD = args.mood
+    expected = len([line for line in open(args.words, encoding="utf-8-sig") if line.strip() and not line.lstrip().startswith("#")])
+    print(f"Input: {args.words} | words={expected}")
+    print(f"Output: {args.output}")
+    print(f"Ollama: {config.OLLAMA_URL} | model={config.OLLAMA_MODEL}")
+    print(f"Image provider: {config.IMAGE_PROVIDER} | model={config.IMAGE_MODEL}")
+    print(f"Music: {config.MUSIC_MOOD}")
+    build_video(args.title, args.output, args.words, expected_count=expected)
     return 0
 
 

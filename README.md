@@ -1,119 +1,115 @@
-# Topic-to-Video Pipeline
+# Italian Vocabulary Video Pipeline
 
-Turns tutorial titles into finished narrated vertical videos without a physical
-phone, manual screenshots, or manual recording.
+A production-oriented, code-driven system for turning an Italian word list into a polished English-language YouTube vocabulary video.
 
-The pipeline creates an original tutorial script with Ollama, plans 15–20
-instructional scenes, renders deterministic phone/UI-style visuals and
-animations from the scene instructions, generates neural narration with
-word-level timing, burns synchronized captions, and assembles the final MP4.
+## What the program does
 
-## Architecture
+You provide a plain text file with **20 Italian words**, one per line. The pipeline then:
 
-`title → Ollama script → 15–20 scene storyboard → automated visuals → Edge TTS → synced captions → MP4`
+1. validates the input and rejects duplicates;
+2. asks Ollama for an English lesson for every word;
+3. creates a semantic image prompt tailored to the word type;
+4. generates one dedicated AI illustration per word;
+5. creates English narration;
+6. builds a professional 16:9 split-screen lesson card with Italian on the left visual and English explanation on the right;
+7. applies subtle motion so the video is not a dead slideshow;
+8. adds a quiet procedural background soundtrack;
+9. assembles and encodes the final MP4 with atomic output replacement.
 
-The visual engine intentionally does **not** pretend to be a real screenshot.
-When exact UI details are uncertain, the planner is instructed to use a neutral
-instructional diagram instead of inventing a UI state.
+There is **no fake iPhone screen generator in the production path**.
 
-## One-time setup on Windows
+## Input
 
-1. Install Python 3.10+.
-2. Install Ollama from the official Ollama website.
-3. Pull the model:
-   ```powershell
-   ollama pull llama3.1
-   ```
-4. Verify it:
-   ```powershell
-   ollama list
-   ```
-   You should see `llama3.1:latest` (the code accepts the untagged `llama3.1`
-   name by default).
-5. From the repository folder install Python dependencies:
-   ```powershell
-   python -m pip install -r requirements.txt
-   ```
+`italian_words.txt` contains exactly 20 words:
 
-`edge-tts` supplies narration and does not require a voice API key. MoviePy
-uses FFmpeg through `imageio-ffmpeg` for rendering.
+```text
+casa
+sole
+mare
+amicizia
+...
+```
 
-## Demo: one command
+Comments beginning with `#` and blank lines are ignored.
 
-The default demo is:
+A five-word `demo_words.txt` is included so the design can be tested without replacing the production list.
 
-`How to customize the Lock Screen on iPhone 17 Pro Max`
+## Timing
 
-Run:
+The default target is **18 seconds per word**. Twenty words therefore provide about 6 minutes of vocabulary content before a short intro and outro. Set `WORD_TARGET_SECONDS=20` for about 6:40 of word segments.
+
+The program never assumes that the generated narration has exactly the target length. Each visual segment lasts at least the configured target, and longer narration is allowed to continue naturally.
+
+## Run the demo
+
+Install dependencies, start Ollama, configure an image provider, then run:
 
 ```powershell
 python run_demo.py
 ```
 
-Or choose another title:
+The demo reads `demo_words.txt` and writes `output/demo_vocabulary.mp4`.
+
+For production:
 
 ```powershell
-python run_demo.py --title "How to take a screenshot on iPhone 17 Pro Max"
+python run_demo.py --words italian_words.txt --title "20 Italian Words You Should Know" --mood meditative
 ```
 
-The result is written to `output/demo.mp4` unless `--output` is supplied.
+## AI images
 
-## Automated tests
-
-Run the offline tests locally:
+The current image adapter supports the OpenAI Images API and a generic custom JSON/image endpoint. Set one of:
 
 ```powershell
+$env:OPENAI_API_KEY="your-key"
+```
+
+or:
+
+```powershell
+$env:IMAGE_GENERATOR_URL="http://localhost:8188/generate"
+```
+
+`IMAGE_PROVIDER=auto` tries OpenAI first when a key is present, then the custom endpoint. Images are cached by prompt hash, so reruns do not regenerate successful images.
+
+The OpenAI image integration currently defaults to `gpt-image-2`, the image-generation model listed in the current OpenAI model catalog. citeturn646426search0
+
+## Music
+
+Music is synthesized locally from code, so the pipeline does not download commercial tracks. Select one of `meditative`, `funny`, or `adventure` with `--mood` or `MUSIC_MOOD`.
+
+## Batch production
+
+`topics.txt` contains one job per line:
+
+```text
+demo_words.txt | Italian Vocabulary Demo
+italian_words.txt | 20 Italian Words You Should Know
+sets/travel.txt | Italian Travel Vocabulary
+```
+
+Each job is independent. A failed video does not stop later jobs, and completed non-empty MP4 files are skipped on a rerun.
+
+## Main environment settings
+
+- `OLLAMA_URL`, `OLLAMA_MODEL`, `OLLAMA_KEEP_ALIVE`
+- `OLLAMA_CONNECT_TIMEOUT`, `OLLAMA_READ_TIMEOUT`
+- `OLLAMA_VOCAB_CONTEXT`, `OLLAMA_VOCAB_PREDICT`
+- `VOCAB_WORD_COUNT` — default 20
+- `WORD_TARGET_SECONDS` — default 18
+- `TTS_VOICE`, `TTS_RATE`, `TTS_CONCURRENCY`
+- `IMAGE_PROVIDER`, `IMAGE_MODEL`, `IMAGE_SIZE`, `IMAGE_QUALITY`
+- `IMAGE_CONCURRENCY`, `IMAGE_RETRIES`
+- `MUSIC_MOOD`, `MUSIC_BPM`, `MUSIC_VOLUME`
+- `VIDEO_WIDTH`, `VIDEO_HEIGHT`, `FPS`, `VIDEO_BITRATE`
+
+## Validation
+
+Run:
+
+```powershell
+python -m compileall -q .
 python -m pytest -q tests
 ```
 
-GitHub Actions also compiles the project and runs these tests automatically.
-These tests validate the visual engine and the 15–20 scene contract without
-requiring a physical iPhone or external image API.
-
-## Batch mode
-
-Put one tutorial title per line in `topics.txt`, then run:
-
-```powershell
-python run_batch.py
-```
-
-The batch runner skips completed outputs and logs failures so an interrupted
-run can be resumed.
-
-## Configuration
-
-Settings are in `config.py` and can also be overridden with environment
-variables:
-
-- `OLLAMA_URL` — default `http://localhost:11434/api/generate`
-- `OLLAMA_MODEL` — default `llama3.1`
-- `TTS_VOICE` — default `en-US-GuyNeural`
-- `TTS_RATE` — default `+0%`
-- `VIDEO_WIDTH` / `VIDEO_HEIGHT` — default 1080×1920
-- `FPS` — default 30
-- `MAX_STEPS_PER_ARTICLE` — default 12
-- `MIN_VISUAL_SCENES` / `MAX_VISUAL_SCENES` — 15 / 20
-
-## Important limitation
-
-The project can automate the creation of instructional visuals, but it cannot
-guarantee pixel-identical replicas of every iOS screen without a trusted source
-of current screen specifications/assets. The planner therefore avoids claiming
-an invented screen is an exact Apple screenshot. This is intentional: accuracy
-is preferred over fabricated UI.
-
-## Files
-
-| File | Purpose |
-|---|---|
-| `config.py` | Central configuration |
-| `generate_articles.py` | Title → original tutorial JSON via Ollama |
-| `scene_planner.py` | Tutorial → 15–20 visual scene storyboard |
-| `visual_engine.py` | Scene → automated instructional visual |
-| `tts.py` | Narration → MP3 + word timestamps |
-| `video_builder.py` | Visuals + narration + captions → MP4 |
-| `run_demo.py` | One-command local demo |
-| `run_batch.py` | Batch entry point |
-| `tests/` | Offline automated tests |
-| `topics.txt` | Tutorial titles |
+The automated tests cover input validation, lesson schema validation, card rendering, and safe empty TTS batches. Production rendering still depends on your local Ollama and configured image-generation service being reachable; no software can honestly guarantee zero future failures from external services.

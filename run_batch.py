@@ -1,80 +1,81 @@
-"""
-Daily entry point.
-
-Usage:
-    python run_batch.py
-
-Reads config.TOPICS_FILE (default topics.txt, one topic per line),
-generates one finished mp4 per topic into output/, logs results to
-logs/run_<date>.log, and skips topics that already have a finished
-video (safe to re-run / resume after a crash or Ctrl+C).
-"""
-import os
+"""Batch renderer for many independent Italian vocabulary video jobs."""
 import re
-import sys
 import time
 import traceback
 from datetime import datetime
+from pathlib import Path
 
 import config
-from video_builder import build_video
+from vocabulary_generator import load_words
+from vocabulary_video import build_video
 
 
-def slugify(title: str) -> str:
-    s = re.sub(r"[^a-zA-Z0-9]+", "-", title.strip().lower()).strip("-")
-    return s[:80] or "untitled"
+def _slug(text):
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:80] or "vocabulary-video"
 
 
-def load_topics(path: str) -> list:
-    if not os.path.exists(path):
-        print(f"ERROR: topics file not found: {path}")
-        print("Create it with 100 lines, one topic title per line, then re-run.")
-        sys.exit(1)
-    with open(path, "r", encoding="utf-8") as f:
-        lines = [l.strip() for l in f if l.strip()]
-    return lines
+def load_jobs(path=None):
+    manifest = Path(path or config.TOPICS_FILE)
+    if not manifest.is_file():
+        raise FileNotFoundError(f"Batch manifest not found: {manifest}")
+    jobs = []
+    for raw in manifest.read_text(encoding="utf-8-sig").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = [part.strip() for part in line.split("|", 1)]
+        words_path = Path(parts[0])
+        if not words_path.is_absolute():
+            words_path = manifest.parent / words_path
+        if not words_path.is_file():
+            raise FileNotFoundError(f"Vocabulary file not found: {words_path}")
+        # Validate the 20-word production contract before expensive generation.
+        load_words(str(words_path), expected_count=config.VOCAB_WORD_COUNT)
+        title = parts[1] if len(parts) == 2 and parts[1] else f"{config.VOCAB_WORD_COUNT} Italian Words"
+        jobs.append((words_path, title))
+    if not jobs:
+        raise ValueError("No batch jobs found")
+    return jobs
 
 
 def main():
-    topics = load_topics(config.TOPICS_FILE)
-    os.makedirs(config.OUTPUT_DIR, exist_ok=True)
-    os.makedirs(config.LOGS_DIR, exist_ok=True)
+    jobs = load_jobs()
+    Path(config.OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
+    Path(config.LOGS_DIR).mkdir(parents=True, exist_ok=True)
+    log_path = Path(config.LOGS_DIR) / f"batch_{datetime.now():%Y%m%d_%H%M%S}.log"
 
-    log_path = os.path.join(config.LOGS_DIR, f"run_{datetime.now():%Y-%m-%d_%H%M%S}.log")
-    log_lines = []
+    def log(message):
+        print(message, flush=True)
+        with log_path.open("a", encoding="utf-8") as handle:
+            handle.write(message + "\n")
 
-    def log(msg):
-        print(msg)
-        log_lines.append(msg)
-        with open(log_path, "a", encoding="utf-8") as f:
-            f.write(msg + "\n")
-
-    log(f"=== Batch run started: {len(topics)} topics ===")
-
-    ok, skipped, failed = 0, 0, 0
-
-    for i, title in enumerate(topics, start=1):
-        out_path = os.path.join(config.OUTPUT_DIR, f"{i:03d}_{slugify(title)}.mp4")
-
-        if config.SKIP_IF_OUTPUT_EXISTS and os.path.exists(out_path):
-            log(f"[{i}/{len(topics)}] SKIP (already done): {title}")
-            skipped += 1
-            continue
-
-        log(f"[{i}/{len(topics)}] Building: {title}")
-        t0 = time.time()
-        try:
-            build_video(title, out_path)
-            log(f"    -> done in {time.time() - t0:.0f}s -> {out_path}")
-            ok += 1
-        except Exception as e:
-            log(f"    -> FAILED: {e}")
-            log("    " + traceback.format_exc().replace("\n", "\n    "))
-            failed += 1
-
-    log(f"=== Finished. ok={ok} skipped={skipped} failed={failed} ===")
-    log(f"Log saved to: {log_path}")
+    ok = skipped = failed = 0
+    log(f"=== Batch started: {len(jobs)} videos ===")
+    try:
+        for index, (words_path, title) in enumerate(jobs, 1):
+            output = Path(config.OUTPUT_DIR) / f"{index:03d}_{_slug(title)}.mp4"
+            if config.SKIP_IF_OUTPUT_EXISTS and output.is_file() and output.stat().st_size > 100_000:
+                log(f"[{index}/{len(jobs)}] SKIP {title}")
+                skipped += 1
+                continue
+            started = time.monotonic()
+            log(f"[{index}/{len(jobs)}] START {title} | source={words_path}")
+            try:
+                build_video(title, str(output), str(words_path), expected_count=config.VOCAB_WORD_COUNT)
+                log(f"[{index}/{len(jobs)}] DONE {output} in {time.monotonic() - started:.0f}s")
+                ok += 1
+            except KeyboardInterrupt:
+                log("Interrupted by user.")
+                raise
+            except Exception as exc:
+                failed += 1
+                log(f"[{index}/{len(jobs)}] FAILED {type(exc).__name__}: {exc}")
+                log(traceback.format_exc())
+    finally:
+        log(f"=== Batch finished: ok={ok} skipped={skipped} failed={failed} ===")
+        log(f"Log: {log_path}")
+    return 0 if failed == 0 else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
