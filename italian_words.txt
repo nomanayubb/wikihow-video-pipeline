@@ -1,6 +1,5 @@
-# Put exactly 20 Italian words here, one per line.
-# Replace these examples with your own 20 words.
-
+# Production input: exactly 20 Italian words, one per line.
+# Replace these demo words with your own words before production.
 casa
 sole
 mare
