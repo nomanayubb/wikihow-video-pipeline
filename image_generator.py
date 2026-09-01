@@ -1,21 +1,26 @@
 """Reliable AI illustration generation for vocabulary lessons."""
 import base64
 import hashlib
+import io
 import os
 import time
 from pathlib import Path
 
 import requests
+from PIL import Image
 
 import config
 
 
 def _cache_path(prompt):
-    digest = hashlib.sha256((prompt + "|image-v2").encode("utf-8")).hexdigest()[:20]
+    digest = hashlib.sha256((prompt + "|image-v3").encode("utf-8")).hexdigest()[:20]
     return Path(config.CACHE_DIR) / "vocab_images" / f"{digest}.png"
 
 
 def _write_atomic(path, data):
+    # Verify the response before it can poison the cache.
+    with Image.open(io.BytesIO(data)) as image:
+        image.verify()
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_suffix(path.suffix + ".tmp")
     temp.write_bytes(data)
@@ -32,7 +37,7 @@ def _request_with_retry(method, url, **kwargs):
         except requests.RequestException as exc:
             last = exc
             if attempt < config.IMAGE_RETRIES:
-                time.sleep(min(2 ** attempt, 4))
+                time.sleep(min(2 ** attempt, 5))
     raise last
 
 
@@ -95,7 +100,13 @@ def generate(prompt, word):
     """Generate and cache one semantic illustration; never invent UI/screenshot art."""
     out_path = _cache_path(prompt)
     if out_path.is_file() and out_path.stat().st_size > 1024:
-        return str(out_path)
+        try:
+            with Image.open(out_path) as image:
+                image.verify()
+            return str(out_path)
+        except (OSError, ValueError):
+            out_path.unlink(missing_ok=True)
+
     style = (
         "Premium editorial illustration for a professional language-learning YouTube channel. "
         "Clear semantic storytelling, cinematic but natural lighting, tasteful modern art direction, "
