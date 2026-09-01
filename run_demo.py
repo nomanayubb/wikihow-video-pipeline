@@ -1,32 +1,24 @@
-"""Generate one long-form Italian vocabulary YouTube video."""
+"""Command-line demo for the Italian vocabulary video generator."""
 import argparse
 import os
-import sys
 
 import config
-from video_builder import build_video
+from vocabulary_video import build_video
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate an automated Italian vocabulary video")
-    parser.add_argument("--words", default=config.VOCAB_FILE, help="Text file containing exactly 20 Italian words")
-    parser.add_argument("--output", default=None)
-    parser.add_argument("--title", default=config.VOCAB_TITLE)
+    parser = argparse.ArgumentParser(description="Create a polished Italian-to-English vocabulary video")
+    parser.add_argument("--words", default="demo_words.txt", help="Text file containing Italian words, one per line")
+    parser.add_argument("--output", default=os.path.join(config.OUTPUT_DIR, "demo_vocabulary.mp4"))
+    parser.add_argument("--title", default="Italian Vocabulary — Learn Through Stories")
+    parser.add_argument("--mood", choices=("meditative", "funny", "adventure"), default=config.MUSIC_MOOD)
     args = parser.parse_args()
-
-    output = args.output or os.path.join(config.OUTPUT_DIR, "italian_vocabulary.mp4")
-    os.makedirs(config.OUTPUT_DIR, exist_ok=True)
-    print(f"Generating: {args.title}")
-    print(f"Words: {args.words} | count must be {config.VOCAB_WORD_COUNT}")
-    print(f"Ollama: {config.OLLAMA_URL} | model: {config.OLLAMA_MODEL}")
-    print(f"Image provider: {config.IMAGE_PROVIDER} | model: {config.IMAGE_MODEL}")
-    try:
-        path = build_video(args.title, output, args.words)
-    except Exception as exc:
-        print(f"VIDEO FAILED: {type(exc).__name__}: {exc}", file=sys.stderr)
-        raise
-    print(f"VIDEO COMPLETE: {path}")
-    return 0
+    os.environ["MUSIC_MOOD"] = args.mood
+    print(f"Input: {args.words}")
+    print(f"Output: {args.output}")
+    print(f"Ollama: {config.OLLAMA_URL} | model={config.OLLAMA_MODEL}")
+    print(f"Image provider: {config.IMAGE_PROVIDER} | model={config.IMAGE_MODEL}")
+    return 0 if build_video(args.title, args.output, args.words) else 1
 
 
 if __name__ == "__main__":
