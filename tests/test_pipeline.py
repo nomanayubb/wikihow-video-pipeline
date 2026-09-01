@@ -1,64 +1,68 @@
 import os
 import sys
 import tempfile
+from pathlib import Path
 
-from PIL import Image
-
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 import config
-from scene_planner import _valid_scene
+from vocabulary_generator import _valid, _validate_words, load_words
+from vocabulary_visual import render_card
 from tts import synthesize_many
-from visual_engine import render
-from vocabulary_generator import _valid
 
 
-def test_visual_engine_output():
-    scene = {
-        'scene_title': 'Illustration test',
-        'screen': 'Vocabulary concept',
-        'target': 'Meaning',
-        'action': 'none',
-        'callout': 'Test',
-    }
-    with tempfile.TemporaryDirectory() as d:
-        path = os.path.join(d, 'scene.png')
-        render(scene, path)
-        assert os.path.isfile(path)
-        with Image.open(path) as im:
-            assert im.size == (config.VIDEO_WIDTH, config.VIDEO_HEIGHT)
-            assert im.format == 'PNG'
+def test_input_validation_requires_exact_word_count():
+    words = [f"w{i}" for i in range(config.VOCAB_WORD_COUNT)]
+    assert _validate_words(words) == words
 
 
-def test_vocabulary_lesson_contract():
+def test_input_validation_rejects_duplicate_words():
+    words = ["casa"] * config.VOCAB_WORD_COUNT
+    try:
+        _validate_words(words)
+    except ValueError as exc:
+        assert "Duplicate" in str(exc)
+    else:
+        raise AssertionError("duplicate vocabulary was accepted")
+
+
+def test_load_words_ignores_comments(tmp_path):
+    words = [f"word{i}" for i in range(config.VOCAB_WORD_COUNT)]
+    path = tmp_path / "words.txt"
+    path.write_text("# comment\n" + "\n".join(words) + "\n", encoding="utf-8")
+    assert load_words(str(path)) == words
+
+
+def test_lesson_contract():
     lesson = {
-        'italian': 'casa',
-        'english': 'house',
-        'part_of_speech': 'noun',
-        'explanation': 'A place where people live.',
-        'example': 'La casa è grande.',
-        'image_prompt': 'A warm welcoming home.',
+        "italian": "casa",
+        "english": "house",
+        "part_of_speech": "noun",
+        "explanation": "A place where people live and feel at home.",
+        "example": "The house is near the beach.",
+        "image_prompt": "A warm Italian home in golden evening light, with a welcoming doorway and garden.",
     }
     assert _valid(lesson)
 
 
-def test_scene_contract():
-    scenes = [
-        {
-            'narration': 'Do this',
-            'visual_type': 'diagram',
-            'screen': 'Concept',
-            'target': 'Meaning',
-            'action': 'none',
-            'callout': '',
-        }
-        for _ in range(config.MIN_VISUAL_SCENES)
-    ]
-    assert config.MIN_VISUAL_SCENES <= len(scenes) <= config.MAX_VISUAL_SCENES
-    assert all(_valid_scene(scene) for scene in scenes)
+def test_card_render(tmp_path):
+    from PIL import Image
+    image_path = tmp_path / "art.png"
+    card_path = tmp_path / "card.png"
+    Image.new("RGB", (1536, 1024), (100, 120, 150)).save(image_path)
+    lesson = {
+        "italian": "casa",
+        "english": "house",
+        "part_of_speech": "noun",
+        "explanation": "A place where people live.",
+        "example": "The house is beautiful.",
+    }
+    render_card(lesson, str(image_path), str(card_path), 1, 5)
+    with Image.open(card_path) as image:
+        assert image.size == (config.VIDEO_WIDTH, config.VIDEO_HEIGHT)
 
 
-def test_tts_empty_batch_is_fast_and_safe():
+def test_tts_empty_batch():
     assert synthesize_many([]) == []
