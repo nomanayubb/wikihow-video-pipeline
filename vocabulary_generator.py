@@ -14,7 +14,7 @@ FIELDS = ("italian", "english", "part_of_speech", "explanation", "example", "ima
 
 def _cache_path(words):
     key = "\n".join(w.strip().casefold() for w in words)
-    digest = hashlib.sha256((key + "|vocab-v2").encode("utf-8")).hexdigest()[:20]
+    digest = hashlib.sha256((key + "|vocab-v3").encode("utf-8")).hexdigest()[:20]
     return os.path.join(config.CACHE_DIR, "lessons", f"{digest}.json")
 
 
@@ -31,13 +31,23 @@ def _extract_json(raw):
 
 
 def _valid(lesson):
-    return isinstance(lesson, dict) and all(str(lesson.get(field, "")).strip() for field in FIELDS)
+    if not isinstance(lesson, dict) or not all(str(lesson.get(field, "")).strip() for field in FIELDS):
+        return False
+    spoken = len(str(lesson["explanation"]).split()) + len(str(lesson["example"]).split())
+    return spoken >= 24
 
 
-def _validate_words(words):
-    cleaned = [str(w).strip() for w in words if str(w).strip() and not str(w).lstrip().startswith("#")]
-    if len(cleaned) != config.VOCAB_WORD_COUNT:
-        raise ValueError(f"Expected exactly {config.VOCAB_WORD_COUNT} Italian words, got {len(cleaned)}")
+def validate_words(words, expected_count=None):
+    cleaned = []
+    for raw in words:
+        word = str(raw).strip()
+        if word and not word.lstrip().startswith("#"):
+            cleaned.append(word)
+    expected = config.VOCAB_WORD_COUNT if expected_count is None else int(expected_count)
+    if expected < config.MIN_WORDS or expected > config.MAX_WORDS:
+        raise ValueError(f"expected_count must be between {config.MIN_WORDS} and {config.MAX_WORDS}")
+    if len(cleaned) != expected:
+        raise ValueError(f"Expected exactly {expected} Italian words, got {len(cleaned)}")
     seen = set()
     duplicates = []
     for word in cleaned:
@@ -50,37 +60,39 @@ def _validate_words(words):
     return cleaned
 
 
-def load_words(path=None):
+def load_words(path=None, expected_count=None):
     path = path or config.VOCAB_FILE
     if not os.path.isfile(path):
         raise FileNotFoundError(f"Vocabulary file not found: {path}")
     with open(path, encoding="utf-8-sig") as handle:
-        return _validate_words(handle.readlines())
+        return validate_words(handle.readlines(), expected_count=expected_count)
 
 
 def _prompt(words):
     payload = json.dumps(words, ensure_ascii=False)
-    return f"""You are an expert Italian-to-English teacher and a professional educational YouTube writer.
-Create one rich lesson for every Italian word in the supplied ordered list.
-The finished video is entirely in English except when speaking or displaying the Italian word.
-For each word write:
-- a precise natural English translation;
-- the part of speech;
-- a clear, descriptive explanation that teaches nuance, context, and everyday usage;
-- one natural English example sentence;
-- a detailed image prompt for one beautiful cinematic editorial illustration.
-Concrete nouns: show the real thing in a believable context.
-Abstract nouns: communicate the idea or feeling with a strong visual metaphor or human situation.
-Adjectives: show a scene that visibly demonstrates the quality.
-Do not include text, labels, logos, phone UI, screenshots, watermarks, or typography in image prompts.
-Aim for roughly 40-55 spoken words of useful teaching material per lesson; do not pad or repeat yourself.
-Preserve order exactly and return ONLY valid JSON in this exact shape:
+    target = config.WORD_TARGET_SECONDS
+    return f"""You are an expert Italian-to-English teacher and professional YouTube educator.
+Create one genuinely useful English lesson for every Italian word in the supplied ordered list.
+The final video is in English except for the Italian word being taught.
+Each lesson should support approximately {target:.0f} seconds of natural narration without filler.
+For each word provide:
+1. precise natural English translation;
+2. part of speech;
+3. descriptive explanation of meaning, nuance, common context, and how a learner would recognize or use it;
+4. one natural English example sentence;
+5. a detailed visual prompt that clearly represents the meaning.
+Concrete nouns: show the real object in a believable scene.
+Abstract nouns: show a vivid human situation or visual metaphor.
+Adjectives: show a scene that makes the quality visually obvious.
+Image prompts must contain no text, labels, logos, phone UI, screenshots, or watermarks.
+Aim for 35-60 useful words across explanation and example. Never pad with repetition.
+Preserve order exactly. Return ONLY valid JSON:
 {{"words":[{{"italian":"...","english":"...","part_of_speech":"...","explanation":"...","example":"...","image_prompt":"..."}}]}}
 ITALIAN WORDS: {payload}"""
 
 
-def generate_lessons(words, use_cache=True, progress=None):
-    words = _validate_words(words)
+def generate_lessons(words, use_cache=True, progress=None, expected_count=None):
+    words = validate_words(words, expected_count=expected_count)
     path = _cache_path(words)
     if use_cache and os.path.isfile(path):
         try:
@@ -116,7 +128,7 @@ def generate_lessons(words, use_cache=True, progress=None):
     data = _extract_json(raw)
     lessons = data.get("words", [])
     if len(lessons) != len(words) or not all(_valid(x) for x in lessons):
-        raise ValueError("Ollama returned an incomplete vocabulary lesson set")
+        raise ValueError("Ollama returned incomplete or too-short vocabulary lessons")
     for expected, lesson in zip(words, lessons):
         if lesson["italian"].strip().casefold() != expected.casefold():
             raise ValueError(f"Ollama changed or reordered vocabulary word: {expected}")
