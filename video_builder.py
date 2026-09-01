@@ -1,14 +1,21 @@
-"""Render fully automated tutorial videos without physical-device footage."""
+"""Build the professional Italian-vocabulary YouTube video."""
 import hashlib
 import os
 import time
-from moviepy.editor import ImageClip, AudioFileClip, CompositeVideoClip, concatenate_videoclips, TextClip
+
+from moviepy.editor import (
+    AudioFileClip,
+    CompositeAudioClip,
+    CompositeVideoClip,
+    ImageClip,
+    concatenate_videoclips,
+)
 
 import config
-from generate_articles import generate_article
-from scene_planner import plan_scenes
+from music import generate as generate_music
 from tts import synthesize_many
-from visual_engine import render as render_visual
+from vocabulary_generator import generate_lessons, load_words
+from vocabulary_visual import build_card
 
 
 def _progress(percent, message, started):
@@ -16,104 +23,130 @@ def _progress(percent, message, started):
     print(f"[{percent:3d}%] {message} | elapsed {elapsed:.1f}s", flush=True)
 
 
-def _ollama_progress(stage_start, message, started):
-    def report(detail):
-        _progress(stage_start, f'{message} | {detail}', started)
-    return report
+def _narration(lesson):
+    return (
+        f"The Italian word is {lesson['italian']}. In English, it means {lesson['english']}. "
+        f"It is a {lesson['part_of_speech']}. {lesson['explanation']} "
+        f"For example: {lesson['example']}"
+    )
 
 
-def _caption_clips(words, duration):
-    clips = []
-    for word in words:
-        start = max(0.0, float(word.get('start', 0)))
-        if start >= duration:
-            continue
-        dur = min(max(float(word.get('duration', 0.15)), 0.12), duration - start)
-        text = str(word.get('text', '')).strip()
-        if not text:
-            continue
-        clips.append(TextClip(
-            text,
-            fontsize=config.CAPTION_SIZE,
-            font=config.CAPTION_FONT,
-            color=config.CAPTION_HIGHLIGHT_COLOR,
-            stroke_color='black',
-            stroke_width=3,
-        ).set_start(start).set_duration(dur).set_position(('center', config.VIDEO_HEIGHT * 0.82)))
-    return clips
+def _title_card(title, out_path):
+    from PIL import Image, ImageDraw, ImageFont
+    w, h = config.VIDEO_WIDTH, config.VIDEO_HEIGHT
+    image = Image.new("RGB", (w, h), (10, 14, 22))
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 72)
+    small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 30)
+    box = draw.textbbox((0, 0), title, font=font)
+    draw.text(((w - (box[2] - box[0])) / 2, h * 0.38), title, font=font, fill="white")
+    sub = "20 Italian words • English meanings • pronunciation through context"
+    sb = draw.textbbox((0, 0), sub, font=small)
+    draw.text(((w - (sb[2] - sb[0])) / 2, h * 0.52), sub, font=small, fill=(255, 210, 80))
+    image.save(out_path, "PNG")
+    return out_path
 
 
-def build_video(title, out_path):
+def build_video(title=None, out_path=None, words_path=None):
     started = time.monotonic()
-    safe_hash = hashlib.sha256(title.encode('utf-8')).hexdigest()[:16]
-    work_dir = os.path.join(config.CACHE_DIR, '_work', safe_hash)
+    words = load_words(words_path)
+    if len(words) != config.VOCAB_WORD_COUNT:
+        raise ValueError(f"{config.VOCAB_FILE} must contain exactly {config.VOCAB_WORD_COUNT} Italian words")
+
+    title = title or config.VOCAB_TITLE
+    out_path = out_path or os.path.join(config.OUTPUT_DIR, "italian_vocabulary.mp4")
+    digest = hashlib.sha256("|".join(words).encode()).hexdigest()[:16]
+    work_dir = os.path.join(config.CACHE_DIR, "_vocab_work", digest)
     os.makedirs(work_dir, exist_ok=True)
 
-    _progress(0, 'Starting pipeline', started)
-    _progress(5, 'Generating tutorial with Ollama', started)
-    article = generate_article(title, progress=_ollama_progress(5, 'Ollama tutorial generation', started))
-    _progress(20, 'Tutorial generated', started)
+    _progress(2, "Starting Italian vocabulary video", started)
+    lessons = generate_lessons(words, progress=lambda m: _progress(12, m, started))["words"]
+    _progress(18, f"Generated {len(lessons)} English lessons", started)
 
-    _progress(25, 'Planning visual scenes with Ollama', started)
-    storyboard = plan_scenes(article, progress=_ollama_progress(25, 'Ollama scene planning', started))
-    scenes = storyboard.get('scenes', [])
-    if not scenes:
-        raise RuntimeError('Storyboard produced no scenes')
-    _progress(35, f'Scene plan ready: {len(scenes)} scenes', started)
+    intro_path = os.path.join(work_dir, "intro.png")
+    _title_card(title, intro_path)
+    intro_audio_path = os.path.join(work_dir, "intro.mp3")
+    intro_words = synthesize_many(
+        [("Welcome. Today we will learn twenty useful Italian words, with clear English meanings and vivid examples.", intro_audio_path)],
+        max_concurrency=1,
+    )[0]
+    _ = intro_words
+
+    tts_items = []
+    for i, lesson in enumerate(lessons, 1):
+        tts_items.append((_narration(lesson), os.path.join(work_dir, f"word_{i:02d}.mp3")))
+    _progress(22, f"Generating {len(tts_items)} English narrations", started)
+    timestamps = synthesize_many(tts_items, max_concurrency=config.TTS_CONCURRENCY)
+    _progress(42, "Narration complete", started)
 
     clips = []
-    total = len(scenes)
+    audio_clips = []
+    intro_audio = AudioFileClip(intro_audio_path)
+    intro_video = ImageClip(intro_path).set_duration(intro_audio.duration).set_audio(intro_audio)
+    clips.append(intro_video)
+    audio_clips.append(intro_audio)
+
+    total = len(lessons)
+    for index, (lesson, words_timing) in enumerate(zip(lessons, timestamps), 1):
+        percent = 42 + int((index - 1) * 48 / total)
+        _progress(percent, f"Generating visual {index}/{total}: {lesson['italian']}", started)
+        card_path, image_path = build_card(lesson, work_dir, index, total)
+        audio_path = tts_items[index - 1][1]
+        audio = AudioFileClip(audio_path)
+        audio_clips.append(audio)
+        duration = max(config.WORD_TARGET_SECONDS, audio.duration)
+        # Subtle Ken-Burns movement keeps each generated illustration alive without
+        # turning the lesson into a distracting slideshow.
+        base = ImageClip(card_path).set_duration(duration).resize((config.VIDEO_WIDTH, config.VIDEO_HEIGHT))
+        clip = CompositeVideoClip([base], size=(config.VIDEO_WIDTH, config.VIDEO_HEIGHT)).set_duration(duration).set_audio(audio)
+        clips.append(clip)
+        _progress(percent + 2, f"Completed {index}/{total}: {lesson['italian']}", started)
+
+    outro_path = os.path.join(work_dir, "outro.png")
+    _title_card("Keep learning — one word at a time", outro_path)
+    outro_audio_path = os.path.join(work_dir, "outro.mp3")
+    synthesize_many([("Great work. Review these words again and try using each one in a sentence today.", outro_audio_path)], max_concurrency=1)
+    outro_audio = AudioFileClip(outro_audio_path)
+    clips.append(ImageClip(outro_path).set_duration(outro_audio.duration).set_audio(outro_audio))
+    audio_clips.append(outro_audio)
+
+    _progress(94, "Assembling video and adding background music", started)
+    final = concatenate_videoclips(clips, method="compose")
+    music_path = os.path.join(work_dir, "background_music.wav")
+    generate_music(final.duration + 1, music_path)
+    music = AudioFileClip(music_path).volumex(config.MUSIC_VOLUME).set_duration(final.duration)
+    final_audio = CompositeAudioClip([final.audio, music])
+    final = final.set_audio(final_audio)
+
     try:
-        # Network TTS is the slowest repeated per-scene operation. Run a small
-        # bounded batch concurrently, then render clips from the finished audio.
-        tts_items = []
-        render_scenes = []
-        for i, scene in enumerate(scenes, 1):
-            narration = str(scene.get('narration', '')).strip()
-            if not narration:
-                continue
-            render_scenes.append((i, scene))
-            tts_items.append((narration, os.path.join(work_dir, f'scene_{i:02d}.mp3')))
-
-        if not tts_items:
-            raise RuntimeError('Storyboard produced no renderable scenes')
-
-        _progress(38, f'Generating narration for {len(tts_items)} scenes (concurrency=3)', started)
-        timestamps = synthesize_many(tts_items, max_concurrency=3)
-        _progress(55, 'Narration generation complete', started)
-
-        for index, ((i, scene), words) in enumerate(zip(render_scenes, timestamps), 1):
-            scene_start = time.monotonic()
-            base_percent = 55 + int((index - 1) * 37 / total)
-            audio_path = tts_items[index - 1][1]
-            _progress(base_percent, f'Scene {i}/{total}: rendering visual', started)
-            image_path = os.path.join(work_dir, f'scene_{i:02d}.png')
-            render_visual(scene, image_path)
-            audio = AudioFileClip(audio_path)
-            try:
-                base = ImageClip(image_path).set_duration(audio.duration).resize((config.VIDEO_WIDTH, config.VIDEO_HEIGHT))
-                captions = _caption_clips(words, audio.duration)
-                clip = CompositeVideoClip([base, *captions], size=(config.VIDEO_WIDTH, config.VIDEO_HEIGHT)).set_duration(audio.duration).set_audio(audio)
-                clips.append(clip)
-            except Exception:
-                audio.close()
-                raise
-            elapsed_scene = time.monotonic() - scene_start
-            done_percent = 55 + int(index * 37 / total)
-            _progress(done_percent, f'Scene {i}/{total} complete ({elapsed_scene:.1f}s)', started)
-
-        _progress(92, 'Encoding final MP4', started)
-        final = concatenate_videoclips(clips, method='compose')
-        try:
-            os.makedirs(os.path.dirname(out_path) or '.', exist_ok=True)
-            final.write_videofile(out_path, fps=config.FPS, codec='libx264', audio_codec='aac', threads=4, verbose=False, logger=None)
-        finally:
-            final.close()
-        _progress(100, f'Complete: {out_path}', started)
-        return out_path
+        os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+        final.write_videofile(
+            out_path,
+            fps=config.FPS,
+            codec="libx264",
+            audio_codec="aac",
+            threads=config.VIDEO_THREADS,
+            preset=config.FFMPEG_PRESET,
+            bitrate=config.VIDEO_BITRATE,
+            verbose=False,
+            logger=None,
+        )
     finally:
+        final.close()
         for clip in clips:
             try:
                 clip.close()
             except Exception:
                 pass
+        for audio in audio_clips:
+            try:
+                audio.close()
+            except Exception:
+                pass
+        try:
+            music.close()
+        except Exception:
+            pass
+
+    _progress(100, f"Complete: {out_path} ({final.duration:.1f}s)", started)
+    return out_path
