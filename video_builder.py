@@ -3,13 +3,7 @@ import hashlib
 import os
 import time
 
-from moviepy.editor import (
-    AudioFileClip,
-    CompositeAudioClip,
-    CompositeVideoClip,
-    ImageClip,
-    concatenate_videoclips,
-)
+from moviepy.editor import AudioFileClip, CompositeAudioClip, CompositeVideoClip, ImageClip, concatenate_videoclips
 
 import config
 from music import generate as generate_music
@@ -40,7 +34,7 @@ def _title_card(title, out_path):
     small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 30)
     box = draw.textbbox((0, 0), title, font=font)
     draw.text(((w - (box[2] - box[0])) / 2, h * 0.38), title, font=font, fill="white")
-    sub = "20 Italian words • English meanings • pronunciation through context"
+    sub = "20 Italian words • English meanings • vivid examples"
     sb = draw.textbbox((0, 0), sub, font=small)
     draw.text(((w - (sb[2] - sb[0])) / 2, h * 0.52), sub, font=small, fill=(255, 210, 80))
     image.save(out_path, "PNG")
@@ -66,37 +60,30 @@ def build_video(title=None, out_path=None, words_path=None):
     intro_path = os.path.join(work_dir, "intro.png")
     _title_card(title, intro_path)
     intro_audio_path = os.path.join(work_dir, "intro.mp3")
-    intro_words = synthesize_many(
-        [("Welcome. Today we will learn twenty useful Italian words, with clear English meanings and vivid examples.", intro_audio_path)],
-        max_concurrency=1,
-    )[0]
-    _ = intro_words
+    synthesize_many([(
+        "Welcome. Today we will learn twenty useful Italian words, with clear English meanings and vivid examples.",
+        intro_audio_path,
+    )], max_concurrency=1)
 
-    tts_items = []
-    for i, lesson in enumerate(lessons, 1):
-        tts_items.append((_narration(lesson), os.path.join(work_dir, f"word_{i:02d}.mp3")))
+    tts_items = [(_narration(lesson), os.path.join(work_dir, f"word_{i:02d}.mp3")) for i, lesson in enumerate(lessons, 1)]
     _progress(22, f"Generating {len(tts_items)} English narrations", started)
-    timestamps = synthesize_many(tts_items, max_concurrency=config.TTS_CONCURRENCY)
+    synthesize_many(tts_items, max_concurrency=config.TTS_CONCURRENCY)
     _progress(42, "Narration complete", started)
 
     clips = []
     audio_clips = []
     intro_audio = AudioFileClip(intro_audio_path)
-    intro_video = ImageClip(intro_path).set_duration(intro_audio.duration).set_audio(intro_audio)
-    clips.append(intro_video)
+    clips.append(ImageClip(intro_path).set_duration(intro_audio.duration).set_audio(intro_audio))
     audio_clips.append(intro_audio)
 
     total = len(lessons)
-    for index, (lesson, words_timing) in enumerate(zip(lessons, timestamps), 1):
+    for index, lesson in enumerate(lessons, 1):
         percent = 42 + int((index - 1) * 48 / total)
         _progress(percent, f"Generating visual {index}/{total}: {lesson['italian']}", started)
-        card_path, image_path = build_card(lesson, work_dir, index, total)
-        audio_path = tts_items[index - 1][1]
-        audio = AudioFileClip(audio_path)
+        card_path, _image_path = build_card(lesson, work_dir, index, total)
+        audio = AudioFileClip(tts_items[index - 1][1])
         audio_clips.append(audio)
         duration = max(config.WORD_TARGET_SECONDS, audio.duration)
-        # Subtle Ken-Burns movement keeps each generated illustration alive without
-        # turning the lesson into a distracting slideshow.
         base = ImageClip(card_path).set_duration(duration).resize((config.VIDEO_WIDTH, config.VIDEO_HEIGHT))
         clip = CompositeVideoClip([base], size=(config.VIDEO_WIDTH, config.VIDEO_HEIGHT)).set_duration(duration).set_audio(audio)
         clips.append(clip)
@@ -112,11 +99,11 @@ def build_video(title=None, out_path=None, words_path=None):
 
     _progress(94, "Assembling video and adding background music", started)
     final = concatenate_videoclips(clips, method="compose")
+    final_duration = final.duration
     music_path = os.path.join(work_dir, "background_music.wav")
-    generate_music(final.duration + 1, music_path)
-    music = AudioFileClip(music_path).volumex(config.MUSIC_VOLUME).set_duration(final.duration)
-    final_audio = CompositeAudioClip([final.audio, music])
-    final = final.set_audio(final_audio)
+    generate_music(final_duration + 1, music_path)
+    music = AudioFileClip(music_path).volumex(config.MUSIC_VOLUME).set_duration(final_duration)
+    final = final.set_audio(CompositeAudioClip([final.audio, music]))
 
     try:
         os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
@@ -148,5 +135,5 @@ def build_video(title=None, out_path=None, words_path=None):
         except Exception:
             pass
 
-    _progress(100, f"Complete: {out_path} ({final.duration:.1f}s)", started)
+    _progress(100, f"Complete: {out_path} ({final_duration:.1f}s)", started)
     return out_path
