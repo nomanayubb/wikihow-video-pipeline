@@ -1,0 +1,7 @@
+# Put one Italian word or short phrase per line. The vocabulary builder translates them to English.
+# Replace these examples with your 100 words.
+amore
+casa
+acqua
+sole
+luna
